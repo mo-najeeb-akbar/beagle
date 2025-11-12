@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      target: dev
+    runtime: nvidia
+    volumes:
+      - .:/code
+      - ${MOUNT_DIR:-/tmp/beagle-data}:${MOUNT_TARGET:-/data}
+    ports:
+      - "${HOST_PORT:-8888}:${CONTAINER_PORT:-8888}"
+    environment:
+      - PYTHONPATH=/code
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TF_CPP_MIN_LOG_LEVEL=1
+    working_dir: /code
+    stdin_open: true
+    tty: true
+
+  examples:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      target: examples
+    runtime: nvidia
+    volumes:
+      - .:/code
+      - ${MOUNT_DIR:-/tmp/beagle-data}:${MOUNT_TARGET:-/data}
+    ports:
+      - "${HOST_PORT:-8888}:${CONTAINER_PORT:-8888}"
+    environment:
+      - PYTHONPATH=/code
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TF_CPP_MIN_LOG_LEVEL=1
+    working_dir: /code
+    stdin_open: true
+    tty: true
+

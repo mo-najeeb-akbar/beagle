@@ -1,0 +1,56 @@
+"""Training utilities for JAX/Flax models.
+
+Functional training library with:
+- Immutable training state and configuration
+- Pure metric functions
+- Composable training loops
+- Checkpoint management
+"""
+
+from beagle.training.types import (
+    TrainState,
+    TrainingConfig,
+    Metrics,
+    create_metrics,
+)
+
+from beagle.training.metrics import (
+    average_metrics,
+    combine_metrics,
+    format_metrics,
+    accumulate_history,
+)
+
+from beagle.training.checkpoint import (
+    save_checkpoint,
+    load_checkpoint,
+    save_config,
+    save_metrics_history,
+)
+
+from beagle.training.loop import (
+    train_epoch,
+    train_loop,
+)
+
+__all__ = [
+    # Types
+    "TrainState",
+    "TrainingConfig",
+    "Metrics",
+    "create_metrics",
+    # Metrics
+    "average_metrics",
+    "combine_metrics",
+    "format_metrics",
+    "accumulate_history",
+    # Checkpoints
+    "save_checkpoint",
+    "load_checkpoint",
+    "save_config",
+    "save_metrics_history",
+    # Training loops
+    "train_epoch",
+    "train_loop",
+]
+

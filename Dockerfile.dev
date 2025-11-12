@@ -1,0 +1,134 @@
+# Multi-stage Dockerfile for beagle library development and testing
+# This is for development/testing, not for distributing the library itself
+
+# Stage 1: Base system dependencies
+FROM ubuntu:22.04 AS base
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    wget \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Stage 2: Python installation
+FROM base AS python-base
+
+# Install Python 3.11 from deadsnakes PPA (with proper GPG key handling)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    ca-certificates \
+    gnupg2 \
+    && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys F23C5A6CF475977595C89F51BA6932366A755776 \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3.11-distutils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python3
+
+# Install pip
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11
+
+# Stage 3: CUDA/GPU dependencies (for JAX)
+# Note: CUDA is typically provided by the host system or nvidia-docker runtime
+# This stage is kept for reference but may not be needed if using nvidia-docker
+FROM python-base AS cuda-base
+
+# CUDA installation is typically handled by nvidia-docker or host system
+# Uncomment if you need CUDA in the container:
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#     cuda-toolkit-12-0 \
+#     && rm -rf /var/lib/apt/lists/* || true
+
+# Stage 4: Python dependencies
+FROM python-base AS deps
+
+WORKDIR /tmp
+
+# Upgrade pip
+RUN pip install --upgrade pip setuptools wheel
+
+# Install core dependencies first (for better caching)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install JAX with CUDA 12 support (matching working config)
+RUN pip install --no-cache-dir --upgrade \
+    "jax[cuda12]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html && \
+    pip install --no-cache-dir \
+    "jaxlib[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html && \
+    pip install --no-cache-dir flax
+
+# Install TensorFlow CPU-only (to avoid GPU conflicts with JAX)
+RUN pip install --no-cache-dir tensorflow-cpu
+
+# Stage 5: Development image
+FROM deps AS dev
+
+WORKDIR /code
+
+# Copy library code
+COPY beagle/ ./beagle/
+COPY tests/ ./tests/
+COPY examples/ ./examples/
+COPY pyproject.toml README.md ./
+
+# Install library in editable mode (if pyproject.toml exists)
+RUN if [ -f pyproject.toml ]; then \
+        pip install --no-cache-dir -e .; \
+    else \
+        echo "No pyproject.toml found, using PYTHONPATH"; \
+    fi
+
+# Set Python path (fallback if not installed as package)
+ENV PYTHONPATH=/code:${PYTHONPATH}
+
+# Configure TensorFlow logging (CUDA_VISIBLE_DEVICES controlled by docker-compose)
+ENV TF_CPP_MIN_LOG_LEVEL=1
+
+# Default command
+CMD ["/bin/bash"]
+
+# Stage 6: Example runner (for running examples with additional dependencies)
+FROM deps AS examples
+
+WORKDIR /code
+
+# Install OpenGL dependencies for opencv
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install example dependencies
+RUN pip install --no-cache-dir \
+    opencv-python \
+    tqdm \
+    ultralytics \
+    albumentations
+
+# Copy library and examples
+COPY beagle/ ./beagle/
+COPY examples/ ./examples/
+COPY pyproject.toml README.md ./
+
+# Install library
+RUN if [ -f pyproject.toml ]; then \
+        pip install --no-cache-dir -e .; \
+    else \
+        echo "No pyproject.toml found, using PYTHONPATH"; \
+    fi
+
+ENV PYTHONPATH=/code:${PYTHONPATH}
+ENV TF_CPP_MIN_LOG_LEVEL=1
+
+CMD ["/bin/bash"]
+

@@ -1,0 +1,442 @@
+---
+alwaysApply: true
+---
+
+## Code Style & Philosophy
+- Write clean, self-documenting code with minimal comments
+- Comments only for complex algorithms or non-obvious design decisions
+- Prioritize clarity through good naming over explanatory comments
+- Follow PEP 8 style guide strictly
+- Use black formatter defaults (line length 88)
+- **FUNCTIONAL FIRST**: Prefer functional programming style wherever practical
+
+## Functional Programming Principles
+
+### Immutability
+- Prefer immutable data structures
+- Use `tuple`, `frozenset`, `namedtuple`, `dataclass(frozen=True)`
+- Never modify function arguments
+- Return new objects instead of mutating existing ones
+- Example:
+```python
+  # Good
+  def add_item(items: tuple[int, ...], item: int) -> tuple[int, ...]:
+      return (*items, item)
+  
+  # Bad
+  def add_item(items: list[int], item: int) -> None:
+      items.append(item)
+```
+
+### Pure Functions
+- Functions should be deterministic: same input → same output
+- Avoid side effects (I/O, global state, mutations)
+- Separate pure logic from side effects
+- Example:
+```python
+  # Good - pure function
+  def calculate_loss(predictions: torch.Tensor, targets: torch.Tensor) -> float:
+      return ((predictions - targets) ** 2).mean().item()
+  
+  # Good - side effect isolated
+  def log_loss(loss: float) -> None:
+      print(f"Loss: {loss}")
+  
+  # Bad - mixed concerns
+  def calculate_and_log_loss(predictions: torch.Tensor, targets: torch.Tensor) -> float:
+      loss = ((predictions - targets) ** 2).mean().item()
+      print(f"Loss: {loss}")  # side effect mixed with computation
+      return loss
+```
+
+### Function Composition
+- Build complex operations from small, composable functions
+- Use `functools` (partial, reduce, compose patterns)
+- Chain operations clearly
+- Example:
+```python
+  from functools import partial, reduce
+  
+  def compose(*functions):
+      return reduce(lambda f, g: lambda x: f(g(x)), functions, lambda x: x)
+  
+  normalize = partial(torch.nn.functional.normalize, p=2, dim=-1)
+  relu = torch.nn.functional.relu
+  pipeline = compose(normalize, relu)  # normalize(relu(x))
+```
+
+### Higher-Order Functions
+- Functions that take/return other functions
+- Use map, filter, reduce patterns (or comprehensions)
+- Avoid loops when functional alternatives exist
+- Example:
+```python
+  # Good
+  def apply_transforms(
+      data: list[torch.Tensor],
+      transforms: list[Callable[[torch.Tensor], torch.Tensor]]
+  ) -> list[torch.Tensor]:
+      return [
+          reduce(lambda x, f: f(x), transforms, item)
+          for item in data
+      ]
+  
+  # Also good - explicit but functional
+  def apply_transforms(
+      data: list[torch.Tensor],
+      transforms: list[Callable[[torch.Tensor], torch.Tensor]]
+  ) -> list[torch.Tensor]:
+      def apply_all(item: torch.Tensor) -> torch.Tensor:
+          return reduce(lambda x, f: f(x), transforms, item)
+      return list(map(apply_all, data))
+```
+
+### Avoid Stateful Classes
+- Prefer functions over classes when possible
+- Use classes only for namespacing or clear data containers
+- Use `@dataclass(frozen=True)` for data holders
+- Example:
+```python
+  from dataclasses import dataclass
+  
+  # Good - immutable data container
+  @dataclass(frozen=True)
+  class TrainingConfig:
+      learning_rate: float
+      batch_size: int
+      epochs: int
+  
+  # Good - pure function
+  def train_step(
+      model: nn.Module,
+      batch: torch.Tensor,
+      config: TrainingConfig
+  ) -> tuple[nn.Module, float]:
+      # Return new state, don't mutate
+      ...
+```
+
+### When State is Necessary
+- Isolate stateful code at boundaries (I/O, training loops)
+- Keep the stateful layer thin
+- Example:
+```python
+  # Pure core logic
+  def compute_update(
+      params: dict[str, torch.Tensor],
+      grads: dict[str, torch.Tensor],
+      lr: float
+  ) -> dict[str, torch.Tensor]:
+      return {k: v - lr * grads[k] for k, v in params.items()}
+  
+  # Stateful wrapper (thin layer)
+  class Trainer:
+      def __init__(self, model: nn.Module):
+          self.model = model  # State isolated here
+      
+      def step(self, batch: torch.Tensor, lr: float) -> float:
+          # Delegate to pure functions
+          grads = compute_gradients(self.model, batch)
+          loss = compute_loss(self.model, batch)
+          updated_params = compute_update(
+              dict(self.model.named_parameters()),
+              grads,
+              lr
+          )
+          self._apply_updates(updated_params)  # Side effect
+          return loss
+```
+
+### Recursion (Use Judiciously)
+- Use recursion for naturally recursive problems
+- Be mindful of Python's recursion limit
+- Prefer iteration for performance-critical code
+- Example:
+```python
+  def flatten(nested: list) -> list:
+      if not nested:
+          return []
+      if isinstance(nested[0], list):
+          return flatten(nested[0]) + flatten(nested[1:])
+      return [nested[0]] + flatten(nested[1:])
+```
+
+## Type Hints
+- **MANDATORY** type hints for all function signatures (args + return types)
+- Use modern Python typing: `list[str]` not `List[str]` (Python 3.9+)
+- Use `from __future__ import annotations` for forward references
+- Use `TypeVar`, `Generic`, `Protocol`, `Callable` for functional code
+- Example:
+```python
+  from typing import Callable, TypeVar
+  
+  T = TypeVar('T')
+  U = TypeVar('U')
+  
+  def map_transform(
+      items: list[T],
+      func: Callable[[T], U]
+  ) -> list[U]:
+      return [func(item) for item in items]
+```
+
+## Testing Philosophy
+- Every public function/class needs tests
+- Use pytest as testing framework
+- **Test pure functions first** - they're easiest to test
+- Property-based testing with `hypothesis` for pure functions
+- Structure: `tests/test_<module_name>.py` mirrors `beagle/<module_name>.py`
+- Test naming: `test_<function>_<scenario>` (e.g., `test_transform_empty_list`)
+- Use fixtures for common setup
+- Aim for fast tests - mock slow operations (I/O, network, heavy compute)
+- Include edge cases: empty inputs, None values, boundary conditions
+
+## Test Structure Example
+```python
+import pytest
+from beagle.datasets import transform_batch
+from beagle.dataset.types import identity  # Use for picklable identity function
+
+def test_transform_batch_applies_function():
+    data = [1, 2, 3]
+    result = transform_batch(data, lambda x: x * 2)
+    assert result == [2, 4, 6]
+
+def test_transform_batch_preserves_immutability():
+    data = [1, 2, 3]
+    original = data.copy()
+    transform_batch(data, lambda x: x * 2)
+    assert data == original  # Original unchanged
+
+def test_transform_batch_handles_empty():
+    assert transform_batch([], lambda x: x * 2) == []
+
+# Property-based testing
+from hypothesis import given, strategies as st
+
+@given(st.lists(st.integers()), st.integers())
+def test_map_then_filter_count(items, threshold):
+    filtered = filter_values(items, lambda x: x > threshold)
+    assert len(filtered) <= len(items)
+```
+
+### Testing with Multiprocessing
+- **Lambda functions cannot be pickled** for multiprocessing
+- Use `identity` from `beagle.dataset.types` for simple identity transformations
+- Define custom functions at **module level** (not inside test functions)
+- Example:
+```python
+# Module level - can be pickled
+def double_value(d: Datum) -> Datum:
+    return Datum(value=d.value * 2, name=d.name, 
+                 serialize_fn=d.serialize_fn, decompress_fn=d.decompress_fn)
+
+# Inside test - use module-level function
+def test_with_multiprocessing():
+    datum = Datum(value=5, name="test", 
+                  serialize_fn=my_fn, decompress_fn=double_value)
+    # This can be pickled for multiprocessing
+```
+
+## Code Organization
+- **MAXIMUM 200 LINES PER FILE** - split larger files into logical modules
+- One class per file for major components
+- Group related functions in single files (functional modules)
+- Flat is better than nested - avoid deep hierarchies
+- `__init__.py` should expose public API clearly
+- Separate pure functions from impure ones (different files if needed)
+- When a file exceeds 200 lines, split into:
+  - Core types/dataclasses in one file
+  - Pure computation functions in another
+  - I/O or side-effect functions in a third
+  - Tests remain comprehensive but can reference multiple modules
+
+## Public API Design
+- Use `__all__` in `__init__.py` to control exports
+- Prefix private functions/classes with `_`
+- No leading underscore = public API = needs tests + type hints
+- Keep public APIs minimal and stable
+- **Prefer functions over classes in public API**
+
+## Documentation
+- Docstrings for public functions/classes only
+- Use Google style docstrings (simple and readable)
+- Note if function is pure or has side effects
+- Example:
+```python
+  def normalize_batch(batch: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+      """Normalize a batch of tensors (pure function).
+      
+      Args:
+          batch: Input tensor batch
+          eps: Small value for numerical stability
+          
+      Returns:
+          Normalized tensor (new object, input unchanged)
+      """
+```
+
+## Dependencies & Imports
+- Prefer stdlib over external deps when reasonable
+- Group imports: stdlib, third-party, local (separated by blank lines)
+- Absolute imports from package root: `from beagle.datasets import ...`
+- Avoid circular imports - restructure if needed
+- Import `functools`, `itertools`, `operator` freely for functional patterns
+
+## Error Handling
+- Fail fast with clear error messages
+- Use built-in exceptions when appropriate: `ValueError`, `TypeError`, etc.
+- Custom exceptions in `beagle/exceptions.py` for domain-specific errors
+- Validate inputs early in public functions
+- Prefer returning `Option`/`Result` types for expected failures (via typing)
+
+## Functional Patterns to Use
+- List/dict/set comprehensions over loops
+- `map()`, `filter()` for transformations (or comprehensions)
+- `functools.partial` for partial application
+- `functools.reduce` for aggregations
+- `itertools` for lazy evaluation
+- Generator expressions for memory efficiency
+- `operator` module for simple lambdas (`operator.add` vs `lambda x, y: x + y`)
+
+## Patterns to Avoid
+- Mutable default arguments
+- Global state
+- Instance variables that change after initialization
+- Methods that return None and mutate state
+- `for` loops with side effects when functional alternatives exist
+- Classes with only `__init__` and one method (use a function instead)
+
+## Docker Workflow
+
+**ALL Python code and tests MUST be run inside Docker containers.**
+
+### Core Commands
+
+```bash
+# Build images (first time or after dependency changes)
+make build
+
+# Open development shell
+make shell
+
+# Run tests
+make test
+
+# Run tests with coverage
+make coverage
+
+# Open shell with example dependencies
+make examples
+```
+
+### Advanced Usage
+
+```bash
+# Run arbitrary command
+make run CMD='python script.py'
+make run CMD='pytest tests/test_specific.py -v'
+
+# Mount external directory
+MOUNT_DIR=~/datasets make shell
+
+# Mount with custom target path in container
+MOUNT_DIR=~/datasets MOUNT_TARGET=/input make shell
+
+# Expose port (e.g., for Jupyter notebook)
+HOST_PORT=8888 make shell
+
+# Combine options
+MOUNT_DIR=~/data HOST_PORT=9000 make shell
+```
+
+### Testing Commands
+
+**Current coverage: 94%**
+
+All test commands must be run via Docker:
+
+```bash
+# Run all tests
+make test
+
+# Run with coverage report
+make coverage
+
+# Run specific test file
+make run CMD='pytest tests/test_loader.py -v'
+
+# Run with hypothesis statistics
+make run CMD='pytest tests/ --hypothesis-show-statistics'
+
+# Run tests with context lines (-A, -B, -C flags work in pytest)
+make run CMD='pytest tests/ -vv'
+```
+
+### Running Examples
+
+```bash
+# Open shell with example dependencies (opencv, tqdm, ultralytics)
+make examples
+
+# Then inside the container:
+python examples/root_writer.py /data/input /data/output
+```
+
+### Environment Variables
+
+- `MOUNT_DIR` - Host directory to mount (default: `/tmp/beagle-data`)
+- `MOUNT_TARGET` - Container mount point (default: `/data`)
+- `HOST_PORT` - Port to expose on host (default: `8888`)
+- `CONTAINER_PORT` - Port in container (default: `8888`)
+- `NVIDIA_VISIBLE_DEVICES` - GPU selection (e.g., `0`, `0,1`; default: all GPUs)
+
+### GPU Support
+
+Docker containers have full GPU access (requires nvidia-docker2):
+
+```bash
+# All GPUs available by default
+make shell
+
+# Verify GPU access
+make run CMD='python -c "import jax; print(jax.devices())"'
+# Should show: [CudaDevice(id=0)]
+
+# Use specific GPUs
+NVIDIA_VISIBLE_DEVICES=0 make shell
+NVIDIA_VISIBLE_DEVICES=0,1 make test
+
+# CPU only
+NVIDIA_VISIBLE_DEVICES="" make shell
+```
+
+The Docker images are pre-configured for JAX GPU usage:
+- **JAX**: Full GPU access via CUDA 12
+- **TensorFlow**: CPU-only (no conflicts)
+- Use `NVIDIA_VISIBLE_DEVICES` to control GPU visibility (not `CUDA_VISIBLE_DEVICES`)
+
+### Important Notes
+
+- **NEVER** suggest activating virtualenv or running Python locally
+- **ALWAYS** use Docker commands via `make` or `docker-compose run --rm`
+- The `make run` command is for arbitrary one-off commands
+- The `make shell` command is for interactive development
+- Code changes in the workspace are automatically reflected in the container (volume mount)
+- No need to rebuild after code changes, only after dependency changes
+
+## Git & Version Control
+- Small, focused commits
+- Conventional commit messages: `feat:`, `fix:`, `test:`, `refactor:`
+- Keep main branch stable - all tests passing
+
+## When Suggesting Code
+1. Always include type hints (especially `Callable` types)
+2. Default to functional style unless state is truly necessary
+3. Mention if tests should be added/updated
+4. Suggest property-based tests for pure functions
+5. Flag any mutations or side effects
+6. Keep it simple and pythonic
+7. Prefer immutable data structures
+8. **ALWAYS run code/tests via Docker**: Use `make` commands
+9. Never suggest activating venv or using local Python
