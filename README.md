@@ -1,15 +1,32 @@
 # Beagle
 
-Functional dataset utilities for TFRecord creation/loading with JAX, training loops, and augmentations.
+Write and train custom JAX models on datasets with minimal friction.
+
+## What It Does
+
+- **Dataset I/O**: Write/read TFRecords with custom serialization, load as JAX iterators
+- **Training**: Functional training loops with checkpointing, metrics, validation
+- **Augmentations**: Image augmentation pipeline with immutable configs
+- **Networks**: VAE, U-Net, HRNet, ViT, receptive field utilities
+
+Future: WebGPU conversion for zero-cost inference with ultra-minimal latency.
 
 ## Quick Start
+
+```bash
+git clone <repository>
+cd beagle
+make build  # Build Docker images
+make shell  # Development shell
+```
+
+### Write TFRecords
 
 ```python
 from beagle.dataset import Datum, write_dataset, serialize_float_array
 from beagle.dataset.types import identity
 import numpy as np
 
-# Create and write TFRecords
 data = [[
     Datum(
         name="features",
@@ -19,60 +36,23 @@ data = [[
     )
 ]]
 write_dataset(data, "output_dir", num_shards=1)
+```
 
-# Load as JAX iterator
+### Load as JAX Iterator
+
+```python
 from beagle.dataset import create_tfrecord_iterator
-iterator, n_batches = create_tfrecord_iterator("output_dir/*.tfrecord", batch_size=32)
+
+iterator, n_batches = create_tfrecord_iterator(
+    "output_dir/*.tfrecord",
+    batch_size=32
+)
+
 for batch in iterator:
     print(batch['features'])  # JAX array
 ```
 
-## Features
-
-- **Dataset**: TFRecord writing/reading with custom serialization, multi-shard parallel writing
-- **Training**: Functional training loops with checkpointing, metrics tracking, validation
-- **Augmentations**: Image augmentation pipeline (albumentations) with immutable configs
-- **Network**: VAE, U-Net, HRNet, ViT, receptive field utilities
-- **Functional**: Immutable data structures, pure functions, composable pipelines
-
-## Installation
-
-```bash
-git clone <repository>
-cd beagle
-make build  # Build Docker images
-make shell  # Development shell
-```
-
-## Docker Workflow
-
-**All code runs in Docker for consistency.**
-
-```bash
-# Core commands
-make build      # Build images (after changing requirements.txt)
-make shell      # Interactive dev shell
-make test       # Run tests (94% coverage)
-make coverage   # Tests with coverage report
-make examples   # Shell with example dependencies (opencv, albumentations, ultralytics)
-
-# Run arbitrary commands
-make run CMD='python examples/root_writer.py /data/input /data/output'
-make run CMD='pytest tests/test_loader.py -v'
-
-# Mount external data
-MOUNT_DIR=~/datasets make shell  # Available at /data in container
-MOUNT_DIR=~/datasets MOUNT_TARGET=/input make shell
-
-# GPU support (requires nvidia-docker2)
-make run CMD='python -c "import jax; print(jax.devices())"'  # Verify GPU
-NVIDIA_VISIBLE_DEVICES=0 make shell  # Use specific GPU
-NVIDIA_VISIBLE_DEVICES="" make shell  # CPU only
-```
-
-## Usage Examples
-
-### Training Loop
+### Train Models
 
 ```python
 from beagle.training import train_loop
@@ -80,8 +60,12 @@ import jax
 
 @jax.jit
 def train_step(state, batch, rng_key):
-    # Your training logic
-    return new_state, {'loss': loss}
+    def loss_fn(params):
+        preds = state.apply_fn({'params': params}, batch['x'])
+        return jnp.mean((preds - batch['y']) ** 2)
+    
+    loss, grads = jax.value_and_grad(loss_fn)(state.params)
+    return state.apply_gradients(grads=grads), {'loss': loss}
 
 def data_iterator_fn():
     for batch in dataloader:
@@ -105,17 +89,27 @@ from beagle.augmentations import create_transform, apply_transform, MODERATE_AUG
 
 transform = create_transform(MODERATE_AUGMENT)
 augmented = apply_transform(transform, image)['image']
-
-# With mask for segmentation
-result = apply_transform(transform, image, mask=mask)
-augmented_image, augmented_mask = result['image'], result['mask']
 ```
 
-## Module Documentation
+## Docker Workflow
 
-- `beagle/training/README.md` - Training loop API
-- `beagle/augmentations/README.md` - Augmentation pipeline
-- `docs/receptive_field_guide.md` - Receptive field computation
+```bash
+# Core commands
+make build      # Build images
+make shell      # Interactive dev shell
+make test       # Run tests (94% coverage)
+make examples   # Shell with example dependencies
+
+# Run arbitrary commands
+make run CMD='python examples/root_writer.py /data/input /data/output'
+
+# Mount external data
+MOUNT_DIR=~/datasets make shell  # Available at /data
+
+# GPU support (requires nvidia-docker2)
+make run CMD='python -c "import jax; print(jax.devices())"'
+NVIDIA_VISIBLE_DEVICES=0 make shell
+```
 
 ## Examples
 
@@ -123,16 +117,18 @@ See `examples/` for complete working examples:
 - `root_writer.py` - Image dataset with FastSAM preprocessing
 - `polymer_writer.py` - Depth map dataset creation
 - `tfrecord_to_jax_example.py` - TFRecord → JAX iterator
-- `training_example.py` - Full training loop example
+- `training_example.py` - Full training loop
+
+## Design Philosophy
+
+- **Functional first**: Immutable data structures, pure functions, composable pipelines
+- **Type-safe**: Full type hints throughout
+- **Minimal**: Clean abstractions without magic
+- **Docker**: Consistent development environment
 
 ## Testing
 
 ```bash
-make test                                          # All tests
-make run CMD='pytest tests/test_loader.py -v'     # Specific test
-make run CMD='pytest --hypothesis-show-statistics' # Property-based stats
+make test
+make run CMD='pytest tests/test_loader.py -v'
 ```
-
-## License
-
-MIT
