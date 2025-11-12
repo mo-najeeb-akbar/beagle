@@ -14,7 +14,7 @@ Future: WebGPU conversion for zero-cost inference with ultra-minimal latency.
 ## Quick Start
 
 ```bash
-git clone <repository>
+git clone git@github.com:mo-najeeb-akbar/beagle.git
 cd beagle
 make build  # Build Docker images
 make shell  # Development shell
