@@ -1,4 +1,4 @@
-# Beagle
+![Banner](./banner/dweegle.png)
 
 A functional-first JAX/Flax library for training deep learning models with minimal friction.
 
@@ -42,7 +42,7 @@ A functional-first JAX/Flax library for training deep learning models with minim
 - Automated conversion tests for all supported architectures
 
 ### Tooling & Integration
-- **MCP Server**: LLM integration for programmatic model training/inference
+- **MCP Server**: ✅ Available - LLM integration for programmatic model training/inference (see `MCP_README.md`)
 - **Training Dashboard**: Wandb integration + minimal built-in metrics visualization
 - Improved VAE training schedules with KL annealing
 
@@ -166,4 +166,31 @@ See `examples/` for complete working examples:
 ```bash
 make test
 make run CMD='pytest tests/test_loader.py -v'
+```
+
+## MCP Server
+
+Beagle includes an MCP (Model Context Protocol) server for LLM integration. This allows AI assistants like Claude to help you:
+
+- Create and manage TFRecord datasets
+- Configure and train neural networks
+- Generate complete training scripts
+- Debug and visualize training results
+
+See `MCP_README.md` for setup and usage instructions.
+
+```bash
+# Install MCP dependencies
+pip install -r requirements-mcp.txt
+
+# Configure in Claude Desktop
+# Add to claude_desktop_config.json:
+{
+  "mcpServers": {
+    "beagle": {
+      "command": "python",
+      "args": ["/path/to/beagle/mcp_server_main.py"]
+    }
+  }
+}
 ```

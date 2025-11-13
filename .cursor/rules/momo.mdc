@@ -9,6 +9,7 @@ alwaysApply: true
 - Follow PEP 8 style guide strictly
 - Use black formatter defaults (line length 88)
 - **FUNCTIONAL FIRST**: Prefer functional programming style wherever practical
+- **NEVER use emojis** in any code, documentation, or comments in this repository
 
 ## Functional Programming Principles
 
