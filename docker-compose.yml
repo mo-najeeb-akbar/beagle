@@ -17,6 +17,7 @@ services:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - TF_CPP_MIN_LOG_LEVEL=1
+      - BEAGLE_HEADLESS=${BEAGLE_HEADLESS:-true}
     working_dir: /code
     stdin_open: true
     tty: true
@@ -37,6 +38,7 @@ services:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - TF_CPP_MIN_LOG_LEVEL=1
+      - BEAGLE_HEADLESS=${BEAGLE_HEADLESS:-true}
     working_dir: /code
     stdin_open: true
     tty: true

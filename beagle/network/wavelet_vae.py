@@ -3,8 +3,9 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 from jax import image, random
-import jaxwt as jwt
 import flax.linen as nn
+
+from beagle.wavelets import waverec2
 
 
 class ResidualBlock(nn.Module):
@@ -114,10 +115,14 @@ class VAE(nn.Module):
     def decode_full(self, z: jnp.ndarray) -> jnp.ndarray:
         """Decode latent to full image via wavelet reconstruction."""
         x_recon = self.Decoder(z, training=False)
-        x_recon = jwt.waverec2(
-            [x_recon[..., 0], (x_recon[..., 2], x_recon[..., 1], x_recon[..., 3])],
-            "haar",
-        )
+        # Rearrange channels from [LL, HL, LH, HH] to [LL, LH, HL, HH]
+        x_recon_reordered = jnp.stack([
+            x_recon[..., 0],  # LL
+            x_recon[..., 2],  # LH
+            x_recon[..., 1],  # HL
+            x_recon[..., 3],  # HH
+        ], axis=-1)
+        x_recon = waverec2(x_recon_reordered, wavelet="haar")
         return x_recon
 
     def reparameterize(
@@ -140,8 +145,12 @@ class VAE(nn.Module):
         mu, log_var = self.encode(x, training)
         z = self.reparameterize(key, mu, log_var)
         x_recon = self.decode(z, training)
-        reconstructed = jwt.waverec2(
-            [x_recon[..., 0], (x_recon[..., 2], x_recon[..., 1], x_recon[..., 3])],
-            "haar",
-        )
+        # Rearrange channels from [LL, HL, LH, HH] to [LL, LH, HL, HH]
+        x_recon_reordered = jnp.stack([
+            x_recon[..., 0],  # LL
+            x_recon[..., 2],  # LH
+            x_recon[..., 1],  # HL
+            x_recon[..., 3],  # HH
+        ], axis=-1)
+        reconstructed = waverec2(x_recon_reordered, wavelet="haar")
         return reconstructed, x_recon, mu, log_var

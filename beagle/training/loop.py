@@ -20,6 +20,7 @@ from beagle.training.checkpoint import save_checkpoint
 
 StepFn = Callable[[TrainState, Any, Any], tuple[TrainState, dict[str, Any]]]
 DataIterator = Iterator[Any] | Callable[[], Iterator[Any]]
+VizCallback = Callable[[TrainState, Any, Any, int], None]
 
 
 def train_epoch(
@@ -80,9 +81,11 @@ def train_loop(
     log_every: int | None = None,
     val_step_fn: StepFn | None = None,
     val_data_iterator: Iterator[Any] | None = None,
-    val_num_batches: int | None = None
+    val_num_batches: int | None = None,
+    viz_callback: VizCallback | None = None,
+    viz_batch: Any | None = None
 ) -> tuple[TrainState, dict[str, list[float]]]:
-    """Complete training loop with checkpointing and logging.
+    """Complete training loop with checkpointing, logging, and visualization.
     
     Args:
         state: Initial training state
@@ -97,11 +100,14 @@ def train_loop(
         val_step_fn: Optional validation step function
         val_data_iterator: Optional validation data iterator
         val_num_batches: Number of validation batches
+        viz_callback: Optional visualization callback (state, batch, rng, epoch) -> None
+        viz_batch: Optional cached batch for visualization (None = use last training batch)
         
     Returns:
         Tuple of (final_state, metrics_history)
     """
     history: dict[str, list[float]] = {}
+    cached_viz_batch = viz_batch
     
     # Use tqdm if available, otherwise simple range
     epoch_iter = tqdm(range(num_epochs), desc="Training") if HAS_TQDM else range(num_epochs)
@@ -119,6 +125,12 @@ def train_loop(
             rng_key=rng_key,
             log_every=log_every
         )
+        
+        # Cache batch for visualization if not provided
+        if viz_callback is not None and cached_viz_batch is None:
+            # Get one batch for visualization
+            viz_iter = data_iterator_fn()
+            cached_viz_batch = next(viz_iter)
         
         # Accumulate metrics with train_ prefix
         train_metrics_prefixed = Metrics(
@@ -144,6 +156,11 @@ def train_loop(
         
         # Log epoch summary
         print(f"Epoch {epoch + 1}/{num_epochs} | {format_metrics(train_metrics)}")
+        
+        # Visualization callback
+        if viz_callback is not None and cached_viz_batch is not None:
+            rng_key, viz_key = random.split(rng_key)
+            viz_callback(state, cached_viz_batch, viz_key, epoch)
         
         # Checkpoint saving
         if checkpoint_dir is not None:

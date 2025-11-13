@@ -21,6 +21,7 @@ help:
 	@echo "  HOST_PORT=8888            - Expose port on host (default: 8888)"
 	@echo "  CONTAINER_PORT=8888       - Port in container (default: 8888)"
 	@echo "  NVIDIA_VISIBLE_DEVICES=0,1 - Select specific GPUs (default: all GPUs)"
+	@echo "  BEAGLE_HEADLESS=true      - Headless viz mode (default: true, use false for GUI)"
 	@echo ""
 	@echo "GPU Support:"
 	@echo "  - Requires nvidia-docker2 or Docker with nvidia runtime"
@@ -33,6 +34,7 @@ help:
 	@echo "  MOUNT_DIR=~/data make shell"
 	@echo "  HOST_PORT=9000 make shell"
 	@echo "  NVIDIA_VISIBLE_DEVICES=0 make shell  # Use only GPU 0"
+	@echo "  BEAGLE_HEADLESS=false make shell     # Enable GUI for visualization"
 	@echo "  make run CMD='python -c \"import jax; print(jax.devices())\"'  # Verify GPU"
 	@echo "  make run CMD='python examples/root_writer.py /data/input /data/output'"
 

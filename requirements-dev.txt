@@ -1,0 +1,12 @@
+# Development and test dependencies (lightweight, may change frequently)
+pytest>=7.0.0
+pytest-cov>=4.0.0
+hypothesis>=6.0.0
+PyWavelets>=1.4.0
+coverage>=7.0.0
+iniconfig>=2.0.0
+pluggy>=1.0.0
+tomli>=2.0.0
+exceptiongroup>=1.0.0
+matplotlib>=3.8.0
+

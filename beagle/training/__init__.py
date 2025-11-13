@@ -5,6 +5,7 @@ Functional training library with:
 - Pure metric functions
 - Composable training loops
 - Checkpoint management
+- Inference utilities
 """
 
 from beagle.training.types import (
@@ -31,6 +32,19 @@ from beagle.training.checkpoint import (
 from beagle.training.loop import (
     train_epoch,
     train_loop,
+    VizCallback,
+)
+
+from beagle.training.inference import (
+    create_inference_fn,
+    batch_inference,
+)
+
+from beagle.training.mixed_precision import (
+    MixedPrecisionPolicy,
+    create_mixed_precision_policy,
+    enable_mixed_precision,
+    get_recommended_policy,
 )
 
 __all__ = [
@@ -52,5 +66,14 @@ __all__ = [
     # Training loops
     "train_epoch",
     "train_loop",
+    "VizCallback",
+    # Inference
+    "create_inference_fn",
+    "batch_inference",
+    # Mixed precision
+    "MixedPrecisionPolicy",
+    "create_mixed_precision_policy",
+    "enable_mixed_precision",
+    "get_recommended_policy",
 ]
 

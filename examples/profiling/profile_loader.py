@@ -50,7 +50,13 @@ def benchmark_pipeline(
     for _ in range(num_batches):
         batch = next(iterator)
         # Force computation
-        _ = batch['image'].numpy()
+        if isinstance(batch, dict):
+            # Parsed data - materialize first field
+            field_name = list(batch.keys())[0]
+            _ = batch[field_name].numpy()
+        else:
+            # Raw TFRecords - just materialize the tensor
+            _ = batch.numpy()
     
     elapsed = time.perf_counter() - start
     

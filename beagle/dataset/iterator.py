@@ -268,26 +268,31 @@ def create_iterator(
         # New flexible API: compute stats for fields that need it
         field_configs = compute_stats_for_fields(files, parser, field_configs)
     
-    # Build dataset pipeline
-    dataset = tf.data.TFRecordDataset(files).map(
-        parser, num_parallel_calls=tf.data.AUTOTUNE
+    # Build dataset pipeline with optimized ordering
+    # Use moderate parallelism (4-8 threads) for predictable performance
+    # AUTOTUNE can be unstable; explicit values give consistent timing
+    n_parallel = 6
+    
+    dataset = tf.data.TFRecordDataset(files, num_parallel_reads=n_parallel).map(
+        parser, num_parallel_calls=n_parallel
     )
     
     # Generate crops if requested
     if crop_size is not None:
         crop_fn = partial(create_overlapping_crops, crop_size=crop_size, stride=stride)
-        dataset = dataset.map(crop_fn, num_parallel_calls=tf.data.AUTOTUNE)
+        dataset = dataset.map(crop_fn, num_parallel_calls=n_parallel)
         dataset = dataset.unbatch()
     
+    # Apply preprocessing/standardization (before cache for consistency)
+    standardize_fn = create_standardize_fn(field_configs)
+    dataset = dataset.map(standardize_fn, num_parallel_calls=n_parallel)
+    
+    # Cache AFTER preprocessing to avoid redundant computation
     dataset = dataset.cache()
     
-    # Apply preprocessing/standardization
-    standardize_fn = create_standardize_fn(field_configs)
-    dataset = dataset.map(standardize_fn, num_parallel_calls=tf.data.AUTOTUNE)
-    
-    # Apply augmentation in TF pipeline (parallel + efficient)
+    # Apply augmentation AFTER cache (augmentations are random, shouldn't be cached)
     if augment_fn is not None:
-        dataset = dataset.map(augment_fn, num_parallel_calls=tf.data.AUTOTUNE)
+        dataset = dataset.map(augment_fn, num_parallel_calls=n_parallel)
     
     # Count samples/crops
     if crop_size is not None:
@@ -313,12 +318,22 @@ def create_iterator(
         dataset = dataset.repeat()
     
     if shuffle:
-        buffer_size = min(20960, n_samples) if crop_size else 4 * batch_size
+        # Optimized shuffle buffer: balance memory vs I/O efficiency
+        # For crops: larger buffer (more variety), for images: smaller buffer (faster)
+        if crop_size:
+            # Use ~10 batches worth of crops for good mixing without excessive memory
+            buffer_size = min(10 * batch_size, n_samples // 2)
+        else:
+            # For images, 8-16 batches is sufficient
+            buffer_size = min(16 * batch_size, n_samples)
         dataset = dataset.shuffle(buffer_size=buffer_size, reshuffle_each_iteration=True)
     
-    # Batch and prefetch (critical for performance!)
+    # Batch and prefetch with explicit sizing for consistent performance
     dataset = dataset.batch(batch_size, drop_remainder=True)
-    dataset = dataset.prefetch(tf.data.AUTOTUNE)
+    # Explicit prefetch of 4-8 batches prevents I/O stalls
+    # More aggressive than AUTOTUNE but ensures GPU never starves
+    prefetch_size = 8 if crop_size else 4
+    dataset = dataset.prefetch(prefetch_size)
     
     # Convert to JAX only at the very end
     iterator = map(partial(to_jax, dtype=jnp.float32), dataset)
