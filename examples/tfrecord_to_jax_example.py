@@ -1,21 +1,15 @@
 """
-Example: TFRecord to JAX iterator with augmentations.
+Example: TFRecord to JAX iterator with TensorFlow augmentations.
 
 This demonstrates how to use the beagle library to create a data pipeline
-that loads TFRecords, applies augmentations, and yields JAX arrays.
+that loads TFRecords, applies TensorFlow augmentations, and yields JAX arrays.
 """
 from __future__ import annotations
 
 import sys
-from functools import partial
+import tensorflow as tf
 
-from beagle.dataset import create_tfrecord_iterator, compute_welford_stats
-from beagle.augmentations import (
-    create_transform,
-    apply_transform,
-    AugmentConfig,
-    MODERATE_AUGMENT,
-)
+from beagle.dataset import create_tfrecord_iterator
 
 
 def main() -> None:
@@ -27,31 +21,28 @@ def main() -> None:
     
     tfrecord_pattern = sys.argv[1]
     
-    # Option 1: Use preset augmentation config
-    print("Creating transform with moderate augmentation...")
-    transform = create_transform(MODERATE_AUGMENT)
-    
-    # Option 2: Custom augmentation config
-    # custom_config = AugmentConfig(
-    #     flip_horizontal=True,
-    #     flip_vertical=True,
-    #     rotate_90=True,
-    #     rotation_limit=15.0,
-    #     shift_limit=0.1,
-    #     scale_limit=(0.9, 1.1),
-    #     brightness_limit=0.1,
-    #     contrast_limit=(0.9, 1.1),
-    #     gaussian_noise_var=0.01,
-    # )
-    # transform = create_transform(custom_config)
-    
-    # Create augmentation function (numpy -> numpy)
-    def augment_fn(img):
-        result = apply_transform(transform, img)
-        return result['image']
+    # Create TensorFlow augmentation function (efficient!)
+    def augment_fn(data_dict: dict[str, tf.Tensor]) -> dict[str, tf.Tensor]:
+        """TensorFlow-based augmentation applied in the data pipeline."""
+        img = data_dict['image']
+        
+        # Random flips
+        img = tf.image.random_flip_left_right(img)
+        img = tf.image.random_flip_up_down(img)
+        
+        # Random brightness/contrast
+        img = tf.image.random_brightness(img, 0.2)
+        img = tf.image.random_contrast(img, 0.8, 1.2)
+        
+        # Random rotation (90 degree increments)
+        k = tf.random.uniform(shape=[], minval=0, maxval=4, dtype=tf.int32)
+        img = tf.image.rot90(img, k=k)
+        
+        data_dict['image'] = img
+        return data_dict
     
     # Create iterator with augmentation
-    print("Creating dataloader...")
+    print("Creating dataloader with TensorFlow augmentations...")
     iterator, n_batches = create_tfrecord_iterator(
         tfrecord_pattern,
         batch_size=32,

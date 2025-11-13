@@ -68,7 +68,12 @@ RUN pip install --no-cache-dir --upgrade \
     pip install --no-cache-dir flax
 
 # Install TensorFlow CPU-only (to avoid GPU conflicts with JAX)
-RUN pip install --no-cache-dir tensorflow-cpu
+# Explicitly uninstall any GPU version and install CPU-only
+RUN pip uninstall -y tensorflow tensorflow-gpu || true && \
+    pip install --no-cache-dir tensorflow-cpu
+
+# Install optional dependencies for testing
+RUN pip install --no-cache-dir albumentations>=1.3.0
 
 # Stage 5: Development image
 FROM deps AS dev
