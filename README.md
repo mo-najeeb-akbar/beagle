@@ -1,15 +1,50 @@
 # Beagle
 
-Write and train custom JAX models on datasets with minimal friction.
+A functional-first JAX/Flax library for training deep learning models with minimal friction.
 
-## What It Does
+## Core Features
 
-- **Dataset I/O**: Write/read TFRecords with custom serialization, load as JAX iterators
-- **Training**: Functional training loops with checkpointing, metrics, validation
-- **Augmentations**: Image augmentation pipeline with immutable configs
-- **Networks**: VAE, U-Net, HRNet, ViT, receptive field utilities
+### Dataset Pipeline
+- **TFRecord I/O**: Write/read TFRecords with custom serialization and compression
+- **JAX Iterators**: Zero-copy TFRecord → JAX array loading with batching and shuffling
+- **Preprocessing**: Automatic cropping, standardization, field statistics computation
+- **Augmentations**: Image augmentation pipeline with immutable configs (via Albumentations)
 
-Future: WebGPU conversion for zero-cost inference with ultra-minimal latency.
+### Neural Networks
+- **VAE Variants**: Categorical VAE, Compact VAE, Wavelet VAE for compression/generation
+- **Vision Models**: U-Net (denoising), HRNet, Vision Transformer (ViT) with masking
+- **Attention**: Multi-head attention blocks with layer scaling
+- **Utilities**: Receptive field computation, patch embeddings, position encodings
+
+### Training Infrastructure
+- **Functional Loops**: Immutable training state, pure functions, composable pipelines
+- **Checkpointing**: Automatic checkpoint save/load with metrics history
+- **Mixed Precision**: FP16/BF16 support with automatic loss scaling
+- **Callbacks**: Visualization callbacks for training progress monitoring
+- **Inference**: Batch inference utilities with JIT compilation
+
+### Visualization & Debugging
+- **Dataset Inspection**: Visualize batches, preview augmentations, tensor statistics
+- **Training Plots**: Image grids, reconstructions, comparison views
+- **Headless Support**: Automatic backend detection for server environments
+
+### Docker-First Development
+- GPU support (CUDA 12 + JAX)
+- Consistent environment with all dependencies
+- Volume mounting for datasets
+- 94% test coverage
+
+## Future Roadmap
+
+### Model Export & Deployment
+- **JAX → TFJS/ONNX/TFLite → WebGPU**: Full conversion pipeline for web deployment
+- **ONNX → Rust Burn → WebGPU**: Alternative Rust-based deployment path
+- Automated conversion tests for all supported architectures
+
+### Tooling & Integration
+- **MCP Server**: LLM integration for programmatic model training/inference
+- **Training Dashboard**: Wandb integration + minimal built-in metrics visualization
+- Improved VAE training schedules with KL annealing
 
 ## Quick Start
 
