@@ -144,7 +144,7 @@ def main() -> None:
         print("❌ Some samples had mismatches")
         print("=" * 50)
 
-    model_tf.save("wavelet_vae_tf.keras")
+    model_tf.export("wavelet_vae_tf")
 
 
 if __name__ == "__main__":
