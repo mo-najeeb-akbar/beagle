@@ -144,7 +144,13 @@ def test_grayscale_image():
 
 def test_different_sizes():
     """Test augmentation with different image sizes."""
-    transform = create_transform(MINIMAL_AUGMENT)
+    # Use config without rotate_90 to preserve shape for non-square images
+    config = AugmentConfig(
+        flip_horizontal=True,
+        flip_vertical=True,
+        rotate_90=False,  # Disable to preserve shape for non-square images
+    )
+    transform = create_transform(config)
     
     for size in [(32, 32), (64, 64), (128, 256)]:
         image = np.random.rand(*size, 3).astype(np.float32)

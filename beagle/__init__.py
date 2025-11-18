@@ -13,6 +13,7 @@ from beagle.training import (
     train_epoch,
     save_checkpoint,
     load_checkpoint,
+    load_params,
     create_inference_fn,
 )
 

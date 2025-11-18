@@ -4,42 +4,30 @@ from beagle.network.compact_vae import CompactVAE
 from beagle.network.dense_encoder import DenseEncoder
 from beagle.network.hrnet import EmbedNet, HRNetBB, MoNet
 from beagle.network.patch import PatchEmbed
-from beagle.network.receptive_field import (
-    LayerConfig,
-    ReceptiveFieldInfo,
-    compute_receptive_field,
-    create_layer_from_module,
-    print_receptive_field_report,
-)
 
 from beagle.network.unet import DenoisingUNet
 from beagle.network.vit import MaskedViT
+from beagle.network.wavelet_vae import VAE
+from beagle.network.tf.wavelet_vae import VAETF
+from beagle.network.wavelets import HaarWaveletConv, HaarWaveletConvTranspose
+
 
 __all__ = [
     "Attention",
     "Block",
     "CategoricalVAE",
     "CompactVAE",
-    "compute_receptive_field",
-    "create_layer_from_module",
+    "VAE",
+    "VAETF",
     "DenseEncoder",
     "DenoisingUNet",
     "EmbedNet",
+    "HaarWaveletConv",
+    "HaarWaveletConvTranspose",
     "HRNetBB",
-    "LayerConfig",
     "LayerScale",
     "MaskedViT",
     "MLP",
     "MoNet",
-    "PatchEmbed",
-    "print_receptive_field_report",
-    "ReceptiveFieldInfo",
+    "PatchEmbed"
 ]
-
-try:
-    from beagle.network.wavelet_vae import VAE
-
-    __all__.append("VAE")
-except ImportError:
-    pass
-

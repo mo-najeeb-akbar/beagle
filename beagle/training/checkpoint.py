@@ -47,6 +47,19 @@ def save_checkpoint(
     checkpointer.save(os.path.abspath(ckpt_path), ckpt, save_args=save_args)
 
 
+def load_params(
+    checkpoint_path: str,
+) -> dict[str, Any]:
+    """Load checkpoint and return parameters.
+    
+    Args:
+        checkpoint_path: Path to checkpoint directory
+    """
+    checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+    restored = checkpointer.restore(os.path.abspath(checkpoint_path))
+    return restored['model']
+
+
 def load_checkpoint(
     checkpoint_path: str,
     state: TrainState

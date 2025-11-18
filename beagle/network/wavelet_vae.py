@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from jax import image, random
 import flax.linen as nn
 
-from beagle.wavelets import waverec2
+from beagle.network.wavelets import HaarWaveletConv, HaarWaveletConvTranspose
 
 
 class ResidualBlock(nn.Module):
@@ -19,11 +19,11 @@ class ResidualBlock(nn.Module):
         act = nn.swish
         skip = x
 
-        x = nn.Conv(self.filters, (3, 3), padding=1, use_bias=False, name="conv1")(x)
+        x = nn.Conv(self.filters, (3, 3), padding='SAME', use_bias=False, name="conv1")(x)
         x = norm(name="gn1")(x)
         x = act(x)
 
-        x = nn.Conv(self.filters, (3, 3), padding=1, use_bias=False, name="conv2")(x)
+        x = nn.Conv(self.filters, (3, 3), padding='SAME', use_bias=False, name="conv2")(x)
         x = norm(name="gn2")(x)
 
         return act(x + skip)
@@ -41,12 +41,14 @@ class Encoder(nn.Module):
         norm = partial(nn.GroupNorm, num_groups=8)
         act = nn.swish
 
+        x = HaarWaveletConv(name="haar_conv")(x)
+        x = nn.GroupNorm(num_groups=4, name="gn_haar")(x)
         for i in range(5):
             x = nn.Conv(
                 self.features,
                 (3, 3),
                 strides=(2, 2),
-                padding=1,
+                padding='SAME',
                 use_bias=False,
                 name=f"conv_layers.{i}",
             )(x)
@@ -79,16 +81,18 @@ class Decoder(nn.Module):
             x = nn.Conv(
                 features=self.features,
                 kernel_size=(3, 3),
-                padding="SAME",
+                padding='SAME',
                 use_bias=False,
+                name=f"conv_layers.{i}"
             )(x)
             x = norm(name=f"gn_layers.{i}")(x)
             x = act(x)
             x = ResidualBlock(self.features)(x, training=training)
 
-        x = nn.Conv(4, (3, 3), padding=1, name="out_conv")(x)
+        x_haar = nn.Conv(4, (3, 3), padding='SAME', name="out_conv")(x)
+        x_recon = HaarWaveletConvTranspose(name="haar_conv_transpose")(x_haar)
 
-        return x
+        return x_recon, x_haar
 
 class VAE(nn.Module):
     """Wavelet-based VAE for image data."""
@@ -109,21 +113,9 @@ class VAE(nn.Module):
 
     def decode(self, z: jnp.ndarray, training: bool = True) -> jnp.ndarray:
         """Decode latent to wavelet coefficients."""
-        x_recon = self.Decoder(z, training=training)
-        return x_recon
+        x_recon, x_haar = self.Decoder(z, training=training)
+        return x_recon, x_haar
 
-    def decode_full(self, z: jnp.ndarray) -> jnp.ndarray:
-        """Decode latent to full image via wavelet reconstruction."""
-        x_recon = self.Decoder(z, training=False)
-        # Rearrange channels from [LL, HL, LH, HH] to [LL, LH, HL, HH]
-        x_recon_reordered = jnp.stack([
-            x_recon[..., 0],  # LL
-            x_recon[..., 2],  # LH
-            x_recon[..., 1],  # HL
-            x_recon[..., 3],  # HH
-        ], axis=-1)
-        x_recon = waverec2(x_recon_reordered, wavelet="haar")
-        return x_recon
 
     def reparameterize(
         self, key: jax.random.PRNGKey, mu: jnp.ndarray, log_var: jnp.ndarray
@@ -144,13 +136,5 @@ class VAE(nn.Module):
         """
         mu, log_var = self.encode(x, training)
         z = self.reparameterize(key, mu, log_var)
-        x_recon = self.decode(z, training)
-        # Rearrange channels from [LL, HL, LH, HH] to [LL, LH, HL, HH]
-        x_recon_reordered = jnp.stack([
-            x_recon[..., 0],  # LL
-            x_recon[..., 2],  # LH
-            x_recon[..., 1],  # HL
-            x_recon[..., 3],  # HH
-        ], axis=-1)
-        reconstructed = waverec2(x_recon_reordered, wavelet="haar")
-        return reconstructed, x_recon, mu, log_var
+        x_recon, x_haar = self.decode(z, training)
+        return x_recon, x_haar, mu, log_var
