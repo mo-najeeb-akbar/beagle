@@ -51,7 +51,7 @@ def create_train_step(wavelet_weights: tuple[float, ...] = (1.0, 8.0, 8.0, 12.0)
         
         def loss_fn(params):
             x_recon, x_wave, mu, log_var = state.apply_fn(
-                {'params': params}, wavelets, training=True, key=rng_key
+                {'params': params}, images, training=True, key=rng_key
             )
             
             recon_loss = jnp.mean(jnp.square(images - x_recon))
@@ -80,10 +80,9 @@ def create_viz_fn(model_apply):
     @jax.jit
     def viz_fn(state, batch, rng_key):
         images = batch['depth']
-        wavelets = wavedec2(images, wavelet="haar")
         
         x_recon, _, _, _ = model_apply(
-            {'params': state.params}, wavelets, training=False, key=rng_key
+            {'params': state.params}, images, training=False, key=rng_key
         )
         
         return {
@@ -201,7 +200,7 @@ def main():
     key = random.key(42)
     key, init_key = random.split(key)
     
-    dummy = jnp.ones((1, 128, 128, 4))
+    dummy = jnp.ones((1, 256, 256, 1))
     variables = model.init(init_key, dummy, random.key(0), training=True)
     
     # Create training state

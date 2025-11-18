@@ -1,4 +1,6 @@
 # Development and test dependencies (lightweight, may change frequently)
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 pytest>=7.0.0
 pytest-cov>=4.0.0
 hypothesis>=6.0.0
@@ -9,4 +11,6 @@ pluggy>=1.0.0
 tomli>=2.0.0
 exceptiongroup>=1.0.0
 matplotlib>=3.8.0
+torch==2.5.1+cpu
+torchvision==0.20.1+cpu
 

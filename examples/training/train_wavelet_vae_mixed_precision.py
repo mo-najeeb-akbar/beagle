@@ -64,7 +64,7 @@ def create_train_step(wavelet_weights: tuple[float, ...] = (1.0, 8.0, 8.0, 12.0)
         def loss_fn(params):
             # Forward pass: internally casts to bfloat16, returns float32
             x_recon, x_wave, mu, log_var = state.apply_fn(
-                {'params': params}, wavelets, training=True, key=rng_key
+                {'params': params}, images, training=True, key=rng_key
             )
             
             # Loss computations stay in float32 (x_recon is float32)
@@ -97,11 +97,10 @@ def create_viz_fn(model_apply):
     @jax.jit
     def viz_fn(state, batch, rng_key):
         images = batch['depth']
-        wavelets = wavedec2(images, wavelet="haar")
         
         # Model outputs float32 for visualization
         x_recon, _, _, _ = model_apply(
-            {'params': state.params}, wavelets, training=False, key=rng_key
+            {'params': state.params}, images, training=False, key=rng_key
         )
         
         return {
@@ -148,7 +147,7 @@ def main():
     key, init_key = random.split(key)
     
     # Initialize with float32 (weights stay float32)
-    dummy = jnp.ones((1, 128, 128, 4), dtype=jnp.float32)
+    dummy = jnp.ones((1, 256, 256, 1), dtype=jnp.float32)
     variables = model.init(init_key, dummy, random.key(0), training=True)
     
     # Verify weights are float32
