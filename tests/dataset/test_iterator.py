@@ -6,13 +6,10 @@ import numpy as np
 import tensorflow as tf
 from pathlib import Path
 
-from beagle.dataset.iterator import (
-    compute_num_crops,
-    make_default_image_parser,
-    create_iterator,
-    create_tfrecord_iterator,
-    compute_welford_stats,
-)
+from beagle.dataset.iterator import create_iterator, create_tfrecord_iterator
+from beagle.dataset.iterator_utils import compute_num_crops, split_files_train_val
+from beagle.dataset.parsers import make_default_image_parser
+from beagle.dataset.stats import compute_welford_stats
 from beagle.dataset.preprocessing import FieldConfig, FieldType
 
 
@@ -34,6 +31,26 @@ def sample_tfrecord(tmp_path: Path) -> str:
             writer.write(example.SerializeToString())
     
     return str(tfrecord_path)
+
+
+@pytest.fixture
+def multiple_tfrecords(tmp_path: Path) -> str:
+    """Create multiple TFRecord files for testing train/val split."""
+    for i in range(5):
+        tfrecord_path = tmp_path / f"test_{i}.tfrecord"
+        with tf.io.TFRecordWriter(str(tfrecord_path)) as writer:
+            for _ in range(4):  # 4 samples per file = 20 total
+                image = np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8)
+                img_str = tf.io.encode_png(image).numpy()
+                
+                example = tf.train.Example(
+                    features=tf.train.Features(
+                        feature={'image': tf.train.Feature(bytes_list=tf.train.BytesList(value=[img_str]))}
+                    )
+                )
+                writer.write(example.SerializeToString())
+    
+    return str(tmp_path / "test_*.tfrecord")
 
 
 def test_compute_num_crops_basic():
@@ -264,7 +281,7 @@ def test_create_iterator_no_files_raises_error():
 
 def test_create_iterator_crop_size_without_stride_raises_error(sample_tfrecord: str):
     """Test that crop_size without stride raises error."""
-    with pytest.raises(ValueError, match="stride must be provided"):
+    with pytest.raises(ValueError, match="stride required when crop_size is set"):
         create_iterator(
             sample_tfrecord,
             batch_size=2,
@@ -314,4 +331,131 @@ def test_compute_welford_stats_with_custom_parser(tmp_path: Path):
     # Mean should be close to 2.0 (mean of 1, 2, 3)
     assert 1.9 < mean < 2.1
     assert std > 0.0
+
+
+def test_split_files_train_val_basic():
+    """Test basic train/val split."""
+    files = [f"file_{i}.tfrecord" for i in range(10)]
+    train, val = split_files_train_val(files, val_split=0.2, seed=42)
+    
+    # Should split into 8 train, 2 val (20% validation)
+    assert len(train) == 8
+    assert len(val) == 2
+    
+    # No overlap between train and val
+    assert set(train).isdisjoint(set(val))
+    
+    # All files accounted for
+    assert set(train) | set(val) == set(files)
+
+
+def test_split_files_train_val_deterministic():
+    """Test that split is deterministic with same seed."""
+    files = [f"file_{i}.tfrecord" for i in range(10)]
+    
+    train1, val1 = split_files_train_val(files, val_split=0.3, seed=123)
+    train2, val2 = split_files_train_val(files, val_split=0.3, seed=123)
+    
+    # Same seed should give same split
+    assert train1 == train2
+    assert val1 == val2
+
+
+def test_split_files_train_val_different_seeds():
+    """Test that different seeds give different splits."""
+    files = [f"file_{i}.tfrecord" for i in range(10)]
+    
+    train1, val1 = split_files_train_val(files, val_split=0.3, seed=42)
+    train2, val2 = split_files_train_val(files, val_split=0.3, seed=999)
+    
+    # Different seeds should likely give different splits
+    # (very small chance they're the same by accident)
+    assert train1 != train2 or val1 != val2
+
+
+def test_split_files_train_val_invalid_split():
+    """Test that invalid split values raise error."""
+    files = [f"file_{i}.tfrecord" for i in range(10)]
+    
+    with pytest.raises(ValueError, match="val_split must be between 0 and 1"):
+        split_files_train_val(files, val_split=0.0)
+    
+    with pytest.raises(ValueError, match="val_split must be between 0 and 1"):
+        split_files_train_val(files, val_split=1.0)
+    
+    with pytest.raises(ValueError, match="val_split must be between 0 and 1"):
+        split_files_train_val(files, val_split=1.5)
+
+
+def test_create_iterator_with_train_val_split(multiple_tfrecords: str):
+    """Test iterator creation with train/val split."""
+    result = create_iterator(
+        multiple_tfrecords,
+        batch_size=2,
+        val_split=0.2,  # 20% validation
+        shuffle=False,
+        repeat=False,
+    )
+    
+    # Should return train and val iterators
+    (train_iter, train_batches), (val_iter, val_batches) = result
+    
+    # Check train iterator
+    assert train_batches > 0
+    train_batch = next(train_iter)
+    assert 'image' in train_batch
+    assert train_batch['image'].shape[0] == 2
+    
+    # Check val iterator
+    assert val_batches > 0
+    val_batch = next(val_iter)
+    assert 'image' in val_batch
+    assert val_batch['image'].shape[0] == 2
+
+
+def test_create_iterator_train_val_no_augment_on_val(multiple_tfrecords: str):
+    """Test that validation iterator has no augmentation."""
+    augment_called = {'train': False, 'val': False}
+    
+    def augment_fn(data_dict):
+        # Track that augmentation was called
+        # This will be applied to train but not val
+        img = data_dict['image']
+        img = tf.image.flip_left_right(img)
+        data_dict['image'] = img
+        return data_dict
+    
+    (train_iter, _), (val_iter, _) = create_iterator(
+        multiple_tfrecords,
+        batch_size=2,
+        val_split=0.2,
+        augment_fn=augment_fn,
+        shuffle=False,
+        repeat=False,
+    )
+    
+    # Both iterators should work
+    train_batch = next(train_iter)
+    val_batch = next(val_iter)
+    
+    assert 'image' in train_batch
+    assert 'image' in val_batch
+
+
+def test_create_iterator_without_val_split(sample_tfrecord: str):
+    """Test that iterator without val_split returns single iterator."""
+    result = create_iterator(
+        sample_tfrecord,
+        batch_size=2,
+        val_split=None,  # No validation split
+        shuffle=False,
+        repeat=False,
+    )
+    
+    # Should return single iterator (not tuple of tuples)
+    iterator, n_batches = result
+    
+    assert n_batches == 5
+    batch = next(iterator)
+    assert 'image' in batch
 

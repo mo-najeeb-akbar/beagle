@@ -174,6 +174,7 @@ def process_single_datx(datx_path, config, output_base_dir):
     """Process a single DATX file according to config"""
     
     # Create output directory for this file
+    datx_path = Path(datx_path)
     file_stem = datx_path.stem
     file_output_dir = output_base_dir / file_stem
     file_output_dir.mkdir(parents=True, exist_ok=True)
@@ -271,7 +272,7 @@ def create_dataset_index(output_dir, all_results):
     
     print(f"\nDataset index saved to: {index_file}")
 
-def convert_datx_dataset(config, n_workers=None):
+def convert_datx_dataset(config, datx_files, n_workers=None):
     
     # Validate required fields
     required_fields = ['input_folder', 'output_folder', 'datasets']
@@ -281,21 +282,11 @@ def convert_datx_dataset(config, n_workers=None):
             sys.exit(1)
     
     # Setup paths
-    input_folder = Path(config['input_folder'])
     output_folder = Path(config['output_folder'])
     output_folder.mkdir(parents=True, exist_ok=True)
     
-    print(f"Input: {input_folder}")
     print(f"Output: {output_folder}")
     print(f"Datasets: {config['datasets']}")
-    
-    # Find files
-    try:
-        datx_files = find_datx_files(input_folder)
-        print(f"Found {len(datx_files)} .datx files")
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
     
     # Determine number of workers
     if n_workers is None:

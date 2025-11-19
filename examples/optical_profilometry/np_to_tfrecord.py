@@ -5,10 +5,10 @@ Converts polymer depth map data (numpy arrays + metadata) into TFRecord format.
 Handles no-data values by converting them to NaN.
 
 Usage:
-    python examples/polymer_writer.py <input_dir> <output_dir>
+    python examples/polymer_np_to_tfrecord.py <input_dir> <output_dir>
 
 Example:
-    python examples/polymer_writer.py ~/Downloads/polymer_data ~/Downloads/polymer_tfrecords
+    python examples/polymer_np_to_tfrecord.py ~/Downloads/polymer_data ~/Downloads/polymer_tfrecords
 """
 from __future__ import annotations
 import sys
@@ -48,7 +48,7 @@ def image_decoder(dat: Datum) -> Datum:
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Usage: python examples/polymer_writer.py <input_dir> <output_dir>")
+        print("Usage: python examples/polymer_np_to_tfrecord.py <input_dir> <output_dir>")
         sys.exit(1)
 
     dat_dir = Path(sys.argv[1])

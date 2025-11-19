@@ -27,6 +27,7 @@ from beagle.training.checkpoint import (
     load_checkpoint,
     load_params,
     save_config,
+    load_config,
     save_metrics_history,
 )
 
@@ -64,6 +65,7 @@ __all__ = [
     "load_checkpoint",
     "load_params",
     "save_config",
+    "load_config",
     "save_metrics_history",
     # Training loops
     "train_epoch",

@@ -19,8 +19,7 @@ from beagle.training import TrainState, train_loop, save_config, save_metrics_hi
 from beagle.visualization import create_viz_callback, VizConfig
 
 # Import from parent directory
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from polymer_data import create_polymer_iterator, compute_polymer_stats
+from data_loader import create_polymer_iterator, compute_polymer_stats
 
 
 CONFIG = {
@@ -31,6 +30,8 @@ CONFIG = {
     "latent_dim": 128,
     "crop_size": 256,
     "crop_overlap": 192,
+    "val_split": 0.2,
+    "split_seed": 42,
 }
 
 
@@ -127,21 +128,30 @@ def main():
     tx = optax.adamw(CONFIG['learning_rate'])
     state = TrainState.create(apply_fn=model.apply, params=variables['params'], tx=tx)
     
-    # Load data using shared module
-    print("Loading polymer dataset...")
-    iterator, batches_per_epoch, img_shape = create_polymer_iterator(
+    # Load data with train/val split
+    print("Loading polymer dataset with train/val split...")
+    (train_iter, train_batches), (val_iter, val_batches), img_shape = create_polymer_iterator(
         data_dir=data_dir,
         batch_size=CONFIG['batch_size'],
         crop_size=CONFIG['crop_size'],
         stride=CONFIG['crop_overlap'],
         shuffle=True,
-        augment=True
+        augment=True,
+        val_split=CONFIG['val_split'],
+        split_seed=CONFIG['split_seed'],
+        save_stats=True,
+        stats_path=f"{exp_dir}/polymer_stats.json",
     )
     
-    print(f"Batches per epoch: {batches_per_epoch}")
+    print(f"Train batches per epoch: {train_batches}")
+    print(f"Val batches per epoch: {val_batches}")
+    print(f"Image shape: {img_shape}")
     
     # Training step and visualization
     train_step_fn = create_train_step()
+    
+    # Get validation batch for visualization (no augmentation)
+    viz_batch = next(val_iter)
     
     viz_config = VizConfig(
         plot_every=5,
@@ -150,12 +160,13 @@ def main():
     )
     viz_callback = create_viz_callback(create_viz_fn(model.apply), viz_config)
     
-    # Data iterator function
+    # Training data iterator function
     def data_fn():
-        return iterator
+        return train_iter
     
     # Train
     print(f"Training for {CONFIG['num_epochs']} epochs...")
+    print("Visualization will use validation data (no augmentation)")
     
     key, train_key = random.split(key)
     final_state, history = train_loop(
@@ -163,10 +174,11 @@ def main():
         train_step_fn=train_step_fn,
         data_iterator_fn=data_fn,
         num_epochs=CONFIG['num_epochs'],
-        num_batches=batches_per_epoch,
+        num_batches=train_batches,
         rng_key=train_key,
         checkpoint_dir=exp_dir,
-        viz_callback=viz_callback
+        viz_callback=viz_callback,
+        viz_batch=viz_batch,  # Use validation batch for visualization
     )
     
     # Save results

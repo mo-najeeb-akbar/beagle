@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Literal
 from enum import Enum
+from pathlib import Path
+import json
 
 import tensorflow as tf
 
@@ -181,4 +183,109 @@ def compute_stats_for_fields(
             updated_configs[name] = config
     
     return updated_configs
+
+
+def save_field_stats(
+    field_configs: dict[str, FieldConfig],
+    output_path: str | Path,
+) -> None:
+    """
+    Save field statistics to JSON file for later use during inference (has side effect: file I/O).
+    
+    Args:
+        field_configs: Field configurations with computed stats
+        output_path: Path to save JSON file (e.g., 'dataset_stats.json')
+    
+    Example:
+        >>> # During training
+        >>> configs = compute_stats_for_fields(files, parser, field_configs)
+        >>> save_field_stats(configs, 'stats.json')
+        >>> 
+        >>> # During inference
+        >>> configs = load_field_stats('stats.json')
+        >>> iterator = create_iterator(..., field_configs=configs)
+    """
+    output_path = Path(output_path)
+    
+    stats_dict = {}
+    for name, config in field_configs.items():
+        if config.stats is not None:
+            mean, std = config.stats
+            stats_dict[name] = {
+                'mean': float(mean),
+                'std': float(std),
+                'field_type': config.field_type.value,
+                'standardize': config.standardize,
+            }
+    
+    with open(output_path, 'w') as f:
+        json.dump(stats_dict, f, indent=2)
+    
+    print(f"Saved stats for {len(stats_dict)} field(s) to {output_path}")
+
+
+def load_field_stats(
+    stats_path: str | Path,
+    field_configs: dict[str, FieldConfig] | None = None,
+) -> dict[str, FieldConfig]:
+    """
+    Load field statistics from JSON file (has side effect: file I/O).
+    
+    Args:
+        stats_path: Path to JSON file with saved stats
+        field_configs: Optional existing configs to update with loaded stats
+                      If None, creates new configs from saved stats
+    
+    Returns:
+        Field configurations with loaded stats
+    
+    Example:
+        >>> # Load stats and create configs
+        >>> configs = load_field_stats('stats.json')
+        >>> iterator = create_iterator(..., field_configs=configs)
+        >>> 
+        >>> # Or update existing configs
+        >>> configs = {'depth': FieldConfig('depth', FieldType.IMAGE)}
+        >>> configs = load_field_stats('stats.json', field_configs=configs)
+    """
+    stats_path = Path(stats_path)
+    
+    with open(stats_path, 'r') as f:
+        stats_dict = json.load(f)
+    
+    loaded_configs = {}
+    
+    for name, stats_data in stats_dict.items():
+        mean = stats_data['mean']
+        std = stats_data['std']
+        field_type = FieldType(stats_data['field_type'])
+        standardize = stats_data.get('standardize', True)
+        
+        # If existing configs provided, update them
+        if field_configs and name in field_configs:
+            existing = field_configs[name]
+            loaded_configs[name] = FieldConfig(
+                name=name,
+                field_type=existing.field_type,
+                standardize=existing.standardize,
+                stats=(mean, std),
+                dtype=existing.dtype,
+            )
+        else:
+            # Create new config from saved data
+            loaded_configs[name] = FieldConfig(
+                name=name,
+                field_type=field_type,
+                standardize=standardize,
+                stats=(mean, std),
+            )
+    
+    # Include any configs not in stats file
+    if field_configs:
+        for name, config in field_configs.items():
+            if name not in loaded_configs:
+                loaded_configs[name] = config
+    
+    print(f"Loaded stats for {len(stats_dict)} field(s) from {stats_path}")
+    return loaded_configs
 

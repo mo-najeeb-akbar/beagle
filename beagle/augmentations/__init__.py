@@ -27,6 +27,9 @@ from .compose import (
     clip_values,
 )
 
+# Import seed utilities from dataset module for convenience
+from ..dataset.seed import set_global_seed, set_tf_deterministic
+
 __all__ = [
     # TensorFlow-based (always available)
     "compose",
@@ -39,6 +42,9 @@ __all__ = [
     "random_brightness",
     "random_contrast",
     "clip_values",
+    # Reproducibility
+    "set_global_seed",
+    "set_tf_deterministic",
 ]
 
 # Optional: Albumentations-based augmentations (requires albumentations)

@@ -23,23 +23,26 @@ def extract_metadata_from_dirname(dirname, template):
     return {}
 
 
-def process_dataset_names(root_dir, template, file_extension='.tif'):
+def process_dataset_names(root_dir, template, file_extension='.datx'):
     root_path = Path(root_dir)
     results = []
     
-    for subdir in root_path.iterdir():
-        if not subdir.is_dir():
+    # Recursively find all files with the specified extension
+    for file_path in root_path.rglob(f'*{file_extension}'):
+        if not file_path.is_file():
             continue
         
-        metadata = extract_metadata_from_dirname(subdir.name, template)
+        # Extract metadata from the filename (without extension)
+        filename_stem = file_path.stem
+        metadata = extract_metadata_from_dirname(filename_stem, template)
         
         if not metadata:
-            print(f"Warning: Could not parse directory name: {subdir.name}")
+            print(f"Warning: Could not parse filename: {filename_stem}")
             continue
         
         result = {
-            'directory_path': str(subdir),
-            'directory_name': subdir.name,
+            'directory_path': str(file_path),
+            'directory_name': filename_stem,
             **metadata
         }
         results.append(result)

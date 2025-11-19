@@ -12,20 +12,22 @@ from .crops import (
     reconstruct_from_crops,
     compute_crop_stats,
 )
-from .iterator import (
-    create_iterator,
-    create_tfrecord_iterator,
+from .iterator import create_iterator, create_tfrecord_iterator
+from .iterator_utils import (
     compute_num_crops,
-    compute_welford_stats,
-    count_tfrecord_samples,
+    split_files_train_val,
     to_jax,
 )
+from .stats import compute_welford_stats, count_tfrecord_samples
+from .seed import set_global_seed, set_tf_deterministic
 from .preprocessing import (
     FieldConfig,
     FieldType,
     compute_field_stats,
     compute_stats_for_fields,
     create_standardize_fn,
+    save_field_stats,
+    load_field_stats,
 )
 
 __all__ = [
@@ -48,7 +50,12 @@ __all__ = [
     'create_tfrecord_iterator',  # Backward compatibility (wraps create_iterator)
     'compute_welford_stats',
     'count_tfrecord_samples',
+    'split_files_train_val',
     'to_jax',
+    
+    # Reproducibility utilities
+    'set_global_seed',
+    'set_tf_deterministic',
     
     # Crop utilities
     'create_overlapping_crops',
@@ -62,6 +69,8 @@ __all__ = [
     'compute_field_stats',
     'compute_stats_for_fields',
     'create_standardize_fn',
+    'save_field_stats',
+    'load_field_stats',
     
     # Serialization utilities
     'serialize_float_array',

@@ -102,6 +102,21 @@ def save_config(config: dict[str, Any], output_dir: str) -> None:
         json.dump(config, f, indent=2)
 
 
+def load_config(checkpoint_dir: str) -> dict[str, Any]:
+    """Load configuration from JSON.
+    
+    Args:
+        checkpoint_dir: Directory containing config.json
+        
+    Returns:
+        Configuration dictionary
+    """
+    config_path = os.path.join(checkpoint_dir, "config.json")
+    
+    with open(config_path, "r") as f:
+        return json.load(f)
+
+
 def save_metrics_history(
     history: dict[str, list[float]],
     output_dir: str
