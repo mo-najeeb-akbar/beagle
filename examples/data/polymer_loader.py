@@ -34,8 +34,12 @@ def main() -> None:
         print(f"\nDataset: {n_imgs} images")
         print(f"Mean: {mean:.6f}")
         print(f"Std:  {std:.6f}")
-        print(f"\nUse with FieldConfig:")
-        print(f"  stats=({mean:.6f}, {std:.6f})")
+        print(f"\nUse with preprocessing:")
+        print(f"  from functools import partial")
+        print(f"  from beagle.dataset import apply_zscore_norm")
+        print(f"  field_configs = {{")
+        print(f"      'depth': partial(apply_zscore_norm, mean={mean:.6f}, std={std:.6f}, epsilon=1e-8)")
+        print(f"  }}")
         return
     
     # Create iterator using shared module

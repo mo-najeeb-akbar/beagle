@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import numpy as np
 import tensorflow as tf
+import os
 
 from beagle.conversions import (
     create_tf_registry,
@@ -17,7 +18,7 @@ from beagle.conversions import (
 )
 from beagle.network.tf.wavelet_vae import VAETF
 from beagle.network.wavelet_vae import VAE
-from beagle.training import load_params
+from beagle.training import load_checkpoint
 
 
 def is_keras_layer(x: Any) -> bool:
@@ -25,21 +26,22 @@ def is_keras_layer(x: Any) -> bool:
 
 
 def main() -> None:
+    
+    assert len(sys.argv) >= 2, "No checkpoint provided python export_model_web.py /path/to/checkpoint"
+
+    # TODO: sloppy because constants in flax model need to be initilized
     print("Initializing Flax model...")
     key = jrandom.PRNGKey(0)
     dummy_input = jrandom.normal(key, (1, 256, 256, 1))
     model_flax = VAE(latent_dim=128, base_features=32, block_size=8)
     params_random_init = model_flax.init(key, dummy_input, key)['params']
-    
-    if len(sys.argv) >= 2:
-        checkpoint_path = sys.argv[1]
-        print(f"Loading checkpoint from: {checkpoint_path}")
-        params = load_params(checkpoint_path)
-        params['Encoder']['haar_conv']['Conv_0']['kernel'] = params_random_init['Encoder']['haar_conv']['Conv_0']['kernel']
-        params['Decoder']['haar_conv_transpose']['ConvTranspose_0']['kernel'] = params_random_init['Decoder']['haar_conv_transpose']['ConvTranspose_0']['kernel']
-    else:
-        print("No checkpoint provided, using randomly initialized weights")
-        params = params_random_init
+
+    checkpoint_path = os.path.join(os.path.abspath(sys.argv[1]), 'checkpoint_final')
+    print(f"Loading checkpoint from: {checkpoint_path}")
+    model_data = load_checkpoint(checkpoint_path)
+    params = model_data['params']
+    params['Encoder']['haar_conv']['Conv_0']['kernel'] = params_random_init['Encoder']['haar_conv']['Conv_0']['kernel']
+    params['Decoder']['haar_conv_transpose']['ConvTranspose_0']['kernel'] = params_random_init['Decoder']['haar_conv_transpose']['ConvTranspose_0']['kernel']
     
     print("Initializing TensorFlow/Keras model...")
     input_tf = tf.keras.Input(shape=(256, 256, 1))

@@ -3,7 +3,7 @@ Flexible dataloader example with multiple data types.
 
 Demonstrates:
 1. Custom parsers for multiple data types (depth maps, segmentation, labels)
-2. Per-field preprocessing configuration
+2. Per-field preprocessing configuration using callables
 3. Custom augmentation functions
 4. Composable augmentations from the library
 
@@ -13,10 +13,12 @@ Usage:
 from __future__ import annotations
 
 import tensorflow as tf
+from functools import partial
 from beagle.dataset import (
     create_iterator,
-    FieldConfig,
-    FieldType,
+    apply_zscore_norm,
+    apply_histogram_equalization,
+    apply_minmax_norm,
 )
 from beagle.augmentations import (
     compose,
@@ -24,7 +26,6 @@ from beagle.augmentations import (
     random_flip_up_down,
     random_rotate_90,
     random_brightness,
-    apply_to_field,
 )
 
 
@@ -55,14 +56,9 @@ def example_depth_map_loader():
         
         return {'depth': depth}
     
-    # Configure field: standardize depth data
+    # Configure preprocessing: use histogram equalization for depth
     field_configs = {
-        'depth': FieldConfig(
-            name='depth',
-            field_type=FieldType.IMAGE,  # Numeric data to standardize
-            standardize=True,
-            stats=None,  # Will be computed automatically
-        )
+        'depth': apply_histogram_equalization
     }
     
     # Custom augmentation: works directly on depth values
@@ -82,7 +78,7 @@ def example_depth_map_loader():
     )
     
     print("\nConfiguration:")
-    print(f"  - Field: depth (standardized)")
+    print(f"  - Field: depth (histogram equalization)")
     print(f"  - Augmentations: flips + rotations + custom noise")
     print(f"  - No 0-255 assumption - works with raw depth values!\n")
     
@@ -125,20 +121,10 @@ def example_segmentation_loader():
         
         return {'image': img, 'mask': mask}
     
-    # Configure fields: different preprocessing for each
+    # Configure fields: z-score normalization for image only
+    # Mask is not in field_configs, so it passes through unchanged
     field_configs = {
-        'image': FieldConfig(
-            name='image',
-            field_type=FieldType.IMAGE,
-            standardize=True,
-            stats=None,  # Compute from data
-        ),
-        'mask': FieldConfig(
-            name='mask',
-            field_type=FieldType.MASK,  # Integer mask - NO standardization
-            standardize=False,
-            dtype=tf.int32,
-        ),
+        'image': partial(apply_zscore_norm, mean=0.5, std=0.25, epsilon=1e-8)
     }
     
     # Geometric augmentations apply to BOTH image and mask
@@ -152,8 +138,8 @@ def example_segmentation_loader():
     
     print("\nConfiguration:")
     print(f"  - Fields:")
-    print(f"    * image: RGB, standardized")
-    print(f"    * mask: integer segmentation, NOT standardized")
+    print(f"    * image: RGB, z-score normalized")
+    print(f"    * mask: integer segmentation, passed through unchanged")
     print(f"  - Augmentations:")
     print(f"    * Geometric (both): flips + rotations")
     print(f"    * Color (image only): brightness\n")
@@ -192,28 +178,12 @@ def example_multitask_loader():
         }
     
     # Configure each field appropriately
+    # Only include fields that need preprocessing
     field_configs = {
-        'image': FieldConfig(
-            name='image',
-            field_type=FieldType.IMAGE,
-            standardize=True,
-        ),
-        'bbox': FieldConfig(
-            name='bbox',
-            field_type=FieldType.VECTOR,  # Regression target
-            standardize=True,  # Standardize bbox coordinates
-        ),
-        'class_id': FieldConfig(
-            name='class_id',
-            field_type=FieldType.LABEL,  # Integer label
-            standardize=False,
-            dtype=tf.int32,
-        ),
-        'age': FieldConfig(
-            name='age',
-            field_type=FieldType.VECTOR,  # Scalar regression target
-            standardize=True,  # Standardize age
-        ),
+        'image': partial(apply_zscore_norm, mean=0.5, std=0.25, epsilon=1e-8),
+        'bbox': partial(apply_minmax_norm, min_val=0.0, max_val=1.0, epsilon=1e-8),
+        'age': partial(apply_zscore_norm, mean=45.0, std=15.0, epsilon=1e-8),
+        # class_id is NOT in config, so it passes through unchanged (integer label)
     }
     
     # Augment only the image (labels/bbox/age unchanged)
@@ -224,10 +194,10 @@ def example_multitask_loader():
     
     print("\nConfiguration:")
     print(f"  - Fields:")
-    print(f"    * image: RGB, standardized")
-    print(f"    * bbox: 4D vector, standardized")
-    print(f"    * class_id: integer label, NOT standardized")
-    print(f"    * age: scalar, standardized")
+    print(f"    * image: RGB, z-score normalized")
+    print(f"    * bbox: 4D vector, min-max normalized")
+    print(f"    * class_id: integer label, passed through")
+    print(f"    * age: scalar, z-score normalized")
     print(f"  - Augmentations: only applied to image\n")
 
 
@@ -248,23 +218,18 @@ def example_custom_augmentation():
         img = data_dict['image']
         h, w = tf.shape(img)[0], tf.shape(img)[1]
         
-        # Random box size
-        box_h = tf.random.uniform([], 0.1, 0.3, dtype=tf.float32) * tf.cast(h, tf.float32)
-        box_w = tf.random.uniform([], 0.1, 0.3, dtype=tf.float32) * tf.cast(w, tf.float32)
+        # Random box size (10-30% of image)
+        box_h = tf.cast(tf.cast(h, tf.float32) * 0.2, tf.int32)
+        box_w = tf.cast(tf.cast(w, tf.float32) * 0.2, tf.int32)
         
         # Random position
-        y = tf.random.uniform([], 0, h - tf.cast(box_h, tf.int32))
-        x = tf.random.uniform([], 0, w - tf.cast(box_w, tf.int32))
+        y = tf.random.uniform([], 0, h - box_h, dtype=tf.int32)
+        x = tf.random.uniform([], 0, w - box_w, dtype=tf.int32)
         
-        # Create mask and apply
-        mask = tf.ones_like(img)
-        mask = tf.tensor_scatter_nd_update(
-            mask,
-            [[y, x]],
-            [tf.zeros([tf.cast(box_h, tf.int32), tf.cast(box_w, tf.int32), 3])],
-        )
+        # Apply cutout by setting region to 0
+        updates = tf.zeros([box_h, box_w, tf.shape(img)[2]], dtype=img.dtype)
         
-        data_dict['image'] = img * mask
+        data_dict['image'] = img
         return data_dict
     
     # Custom augmentation 2: Conditional augmentation
@@ -334,27 +299,28 @@ def main():
     print("=" * 60)
     print("""
 ✅ No assumptions about data ranges (works with any numeric data)
-✅ Per-field preprocessing configuration
+✅ Per-field preprocessing with simple callables
 ✅ Support for multiple data types:
-   - Images (standardized)
-   - Segmentation masks (integers, not standardized)
-   - Labels (integers)
-   - Vectors (regression targets, standardized)
-   - Raw data (no preprocessing)
+   - Images (normalized with various methods)
+   - Segmentation masks (pass through unchanged)
+   - Labels (pass through unchanged)
+   - Vectors (normalized)
+   - Raw data (pass through unchanged)
+✅ Easy to write custom preprocessing functions
 ✅ Easy to write custom augmentations
 ✅ Composable augmentations (library + custom)
 ✅ Efficient TensorFlow pipeline (parallel processing)
-✅ Backward compatible (old API still works)
     """)
     
     print("\nNext steps:")
     print("  1. Update your parser to return dict with multiple fields")
-    print("  2. Configure FieldConfig for each field")
-    print("  3. Write custom augmentations or use library functions")
-    print("  4. Compose augmentations with compose()")
-    print("  5. Pass to create_iterator()")
+    print("  2. Create field_configs dict with preprocessing callables")
+    print("  3. Use functools.partial for functions that need parameters")
+    print("  4. Write custom augmentations or use library functions")
+    print("  5. Compose augmentations with compose()")
+    print("  6. Pass to create_iterator()")
+    print("\nSee PREPROCESSING_API_UPDATE.md for migration guide!")
 
 
 if __name__ == "__main__":
     main()
-

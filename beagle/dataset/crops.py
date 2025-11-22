@@ -1,9 +1,3 @@
-"""
-Overlapping crop generation for large images.
-
-Provides utilities for extracting overlapping crops from images and
-reconstructing full images from crops for validation.
-"""
 from __future__ import annotations
 
 from typing import Callable
@@ -36,7 +30,8 @@ def create_overlapping_crops(
     reference_tensor = None
     
     for key, tensor in data_dict.items():
-        if len(tensor.shape) == 3:  # (H, W, C) format
+        # Use ndims which is known at graph construction time
+        if tensor.shape.ndims == 3:  # (H, W, C) format
             image_fields.append(key)
             if reference_field is None:
                 reference_field = key

@@ -1,54 +1,31 @@
 from __future__ import annotations
 
-import tensorflow as tf
-import numpy as np
 from typing import Callable
 
-
-def count_tfrecord_samples(files: list[str]) -> int:
-    """
-    Count total samples in TFRecord files (has side effect: reads files).
-    
-    Args:
-        files: List of TFRecord file paths
-    
-    Returns:
-        Total number of samples
-    """
-    return sum(sum(1 for _ in tf.data.TFRecordDataset([f])) for f in files)
+import tensorflow as tf
 
 
-def compute_welford_stats(
+def compute_fields_min_max(
     files: list[str],
-    parser: Callable[[tf.Tensor], dict[str, tf.Tensor]] | None = None,
-    field_name: str = "image",
-) -> tuple[float, float]:
+    parser: Callable[[tf.Tensor], dict[str, tf.Tensor]],
+    field_names: list[str],
+) -> dict[str, tuple[float, float]]:
     """
-    Compute global mean/std using Welford's online algorithm (has side effect: reads files).
+    Compute min and max for multiple fields (has side effect: file I/O).
     
-    Uses batched/vectorized updates for efficiency - much faster than per-element updates.
+    Automatically filters out NaN and zero values (common masking approach).
+    More efficient than calling compute_field_min_max multiple times.
     
     Args:
         files: List of TFRecord file paths
-        parser: Optional custom parser function that returns dict with 'image' field
-                If None, uses default image parser
-        field_name: Name of field to compute stats on (default: 'image')
+        parser: Parser function that returns dict with the fields
+        field_names: Names of fields to compute stats for
     
     Returns:
-        (mean, std) tuple
+        Dict mapping field name to (min, max) tuple
     """
-    if parser is None:
-        def parse_image(example_proto: tf.Tensor) -> dict[str, tf.Tensor]:
-            parsed = tf.io.parse_single_example(
-                example_proto, {"image": tf.io.FixedLenFeature([], tf.string)}
-            )
-            img = tf.io.decode_image(parsed["image"], channels=3)
-            img = tf.image.rgb_to_grayscale(img)
-            img = tf.cast(img, tf.float32) / 255.0
-            return {"image": img}
-        parser = parse_image
+    import numpy as np
     
-    # Parallel map and larger batches for speed
     dataset = (
         tf.data.TFRecordDataset(files)
         .map(parser, num_parallel_calls=tf.data.AUTOTUNE)
@@ -56,32 +33,135 @@ def compute_welford_stats(
         .prefetch(tf.data.AUTOTUNE)
     )
     
-    # Welford's algorithm for batched updates (vectorized - MUCH faster!)
-    count = 0
-    mean = 0.0
-    m2 = 0.0
+    stats = {
+        field_name: (float('inf'), float('-inf'))
+        for field_name in field_names
+    }
     
     for batch in dataset:
-        values = tf.reshape(batch[field_name], [-1]).numpy()
-        # Remove NaNs and zeros (masked values)
-        values = values[~np.isnan(values)]
-        values = values[values != 0.0]
-        
-        if len(values) == 0:
-            continue
-        
-        # Batched Welford update (vectorized!)
-        batch_count = len(values)
-        batch_mean = np.mean(values)
-        batch_m2 = np.sum((values - batch_mean) ** 2)
-        
-        # Merge batch stats with running stats
-        new_count = count + batch_count
-        delta = batch_mean - mean
-        mean = mean + delta * batch_count / new_count
-        m2 = m2 + batch_m2 + delta**2 * count * batch_count / new_count
-        count = new_count
+        for field_name in field_names:
+            if field_name not in batch:
+                continue
+            
+            values = tf.reshape(batch[field_name], [-1]).numpy()
+            values = values[~np.isnan(values)]
+            values = values[values != 0.0]
+            
+            if len(values) == 0:
+                continue
+            
+            current_min, current_max = stats[field_name]
+            stats[field_name] = (
+                min(current_min, float(np.min(values))),
+                max(current_max, float(np.max(values)))
+            )
     
-    std = float(np.sqrt(m2 / (count - 1))) if count > 1 else 0.0
-    return float(mean), std
+    return stats
 
+
+def compute_fields_mean_std(
+    files: list[str],
+    parser: Callable[[tf.Tensor], dict[str, tf.Tensor]],
+    field_names: list[str],
+) -> dict[str, tuple[float, float]]:
+    """
+    Compute mean and std for multiple fields using Welford's algorithm (has side effect: file I/O).
+    
+    Automatically filters out NaN and zero values (common masking approach).
+    More efficient than calling compute_field_mean_std multiple times.
+    
+    Args:
+        files: List of TFRecord file paths
+        parser: Parser function that returns dict with the fields
+        field_names: Names of fields to compute stats for
+    
+    Returns:
+        Dict mapping field name to (mean, std) tuple
+    """
+    import numpy as np
+    
+    dataset = (
+        tf.data.TFRecordDataset(files)
+        .map(parser, num_parallel_calls=tf.data.AUTOTUNE)
+        .batch(100)
+        .prefetch(tf.data.AUTOTUNE)
+    )
+    
+    stats = {
+        field_name: {'count': 0, 'mean': 0.0, 'm2': 0.0}
+        for field_name in field_names
+    }
+    
+    for batch in dataset:
+        for field_name in field_names:
+            if field_name not in batch:
+                continue
+            
+            values = tf.reshape(batch[field_name], [-1]).numpy()
+            values = values[~np.isnan(values)]
+            values = values[values != 0.0]
+            
+            if len(values) == 0:
+                continue
+            
+            batch_count = len(values)
+            batch_mean = np.mean(values)
+            batch_m2 = np.sum((values - batch_mean) ** 2)
+            
+            field_stats = stats[field_name]
+            count = field_stats['count']
+            mean = field_stats['mean']
+            m2 = field_stats['m2']
+            
+            new_count = count + batch_count
+            delta = batch_mean - mean
+            new_mean = mean + delta * batch_count / new_count
+            new_m2 = m2 + batch_m2 + delta**2 * count * batch_count / new_count
+            
+            stats[field_name] = {
+                'count': new_count,
+                'mean': new_mean,
+                'm2': new_m2
+            }
+    
+    return {
+        field_name: (
+            float(field_stats['mean']),
+            float(np.sqrt(field_stats['m2'] / (field_stats['count'] - 1)))
+            if field_stats['count'] > 1 else 0.0
+        )
+        for field_name, field_stats in stats.items()
+    }
+
+
+
+def save_field_stats(
+    path: str,
+    stats: dict[str, dict[str, float]]
+) -> None:
+    """
+    Save statistics for multiple fields to a JSON file (has side effect: file I/O).
+    
+    Args:
+        path: Path to save JSON file
+        stats: Dict mapping field names to their stats.
+               Example: {"field1": {"min": 0.0, "max": 1.0, "mean": 0.5, "std": 0.2}}
+    """
+    import json
+    with open(path, 'w') as f:
+        json.dump(stats, f, indent=2)
+
+
+def load_field_stats(path: str) -> dict[str, dict[str, float]]:
+    """
+    Load statistics for multiple fields from a JSON file (has side effect: file I/O).
+    
+    Args:
+        path: Path to JSON file
+        
+    Returns:
+        Dict mapping field names to their stats
+    """
+    import json
+    with open(path, 'r') as f:
+        return json.load(f)

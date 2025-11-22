@@ -1,188 +1,150 @@
 from __future__ import annotations
 
 from typing import Iterator, Callable
-from dataclasses import dataclass
-import glob
+from functools import partial
+import random
 
 import tensorflow as tf
+import jax
+import jax.numpy as jnp
 
-from .iterator_utils import (
-    to_jax,
-    compute_num_crops,
-    split_files_train_val,
-    build_dataset_pipeline,
-)
-from .parsers import make_default_image_parser
-from .stats import compute_welford_stats, count_tfrecord_samples
-from .preprocessing import (
-    FieldConfig,
-    FieldType,
-    compute_stats_for_fields,
-    save_field_stats,
-)
+from .crops import create_overlapping_crops
+
+def to_jax(tensor_dict: dict, dtype: jnp.dtype = jnp.float32) -> dict:
+    return jax.tree.map(lambda x: jnp.array(x, dtype=dtype), tensor_dict)
 
 
-@dataclass(frozen=True)
-class DatasetConfig:
-    """Configuration for dataset loading (immutable)."""
-    batch_size: int = 32
-    shuffle: bool = True
-    repeat: bool = True
-    crop_size: int | None = None
-    stride: int | None = None
-    image_shape: tuple[int, int] | None = None
+def compute_num_crops(
+    height: int,
+    width: int,
+    crop_size: int,
+    stride: int,
+) -> int:
+    num_rows = (height - crop_size) // stride + 1
+    num_cols = (width - crop_size) // stride + 1
+    return num_rows * num_cols
 
 
-@dataclass(frozen=True)
-class SplitConfig:
-    """Configuration for train/val split (immutable)."""
-    val_split: float
-    seed: int = 42
+def split_files_train_val(
+    files: list[str],
+    val_split: float,
+    seed: int = 42,
+) -> tuple[list[str], list[str]]:
+    rng = random.Random(seed)
+    shuffled = files.copy()
+    rng.shuffle(shuffled)
+    
+    val_size = int(len(shuffled) * val_split)
+    val_files = shuffled[:val_size]
+    train_files = shuffled[val_size:]
+    
+    return train_files, val_files
 
 
-def _resolve_parser(
-    parser: Callable[[tf.Tensor], dict[str, tf.Tensor]] | None,
-    grayscale: bool,
-) -> Callable[[tf.Tensor], dict[str, tf.Tensor]]:
-    """Get parser, using default if none provided (pure)."""
-    return parser if parser is not None else make_default_image_parser(grayscale)
+def count_tfrecord_samples(files: list[str]) -> int:
+    return sum(1 for _ in tf.data.TFRecordDataset(files))
 
 
-def _resolve_field_configs(
+def create_standardize_fn(
+    field_configs: dict[str, Callable],
+) -> Callable[[dict[str, tf.Tensor]], dict[str, tf.Tensor]]:
+    """Create standardization function from field configurations."""
+    def normalize(data_dict: dict[str, tf.Tensor]) -> dict[str, tf.Tensor]:
+        result = {}
+        for name, tensor in data_dict.items():
+            if name not in field_configs:
+                result[name] = tensor
+                continue
+            result[name] = field_configs[name](tensor)
+        
+        return result
+    
+    return normalize
+
+
+def build_dataset_pipeline(
     files: list[str],
     parser: Callable[[tf.Tensor], dict[str, tf.Tensor]],
-    field_configs: dict[str, FieldConfig] | None,
-    legacy_stats: tuple[float, float] | None,
-) -> dict[str, FieldConfig]:
-    """Resolve field configs with stats computation (has side effect: file I/O)."""
-    if field_configs is not None:
-        return compute_stats_for_fields(files, parser, field_configs)
-    
-    # Legacy path: single 'image' field
-    if legacy_stats is None:
-        mean, std = compute_welford_stats(files, parser=parser, field_name="image")
-    else:
-        mean, std = legacy_stats
-    
-    return {
-        'image': FieldConfig(
-            name='image',
-            field_type=FieldType.IMAGE,
-            standardize=True,
-            stats=(mean, std),
-        )
-    }
-
-
-def create_iterator(
-    tfrecord_pattern: str,
-    batch_size: int = 32,
-    parser: Callable[[tf.Tensor], dict[str, tf.Tensor]] | None = None,
-    field_configs: dict[str, FieldConfig] | None = None,
-    augment_fn: Callable[[dict[str, tf.Tensor]], dict[str, tf.Tensor]] | None = None,
-    shuffle: bool = True,
-    grayscale: bool = True,
-    repeat: bool = True,
-    crop_size: int | None = None,
-    stride: int | None = None,
-    image_shape: tuple[int, int] | None = None,
-    val_split: float | None = None,
-    split_seed: int = 42,
-    save_stats_path: str | None = None,
-    precomputed_stats: tuple[float, float] | None = None,
-) -> tuple[Iterator[dict], int] | tuple[tuple[Iterator[dict], int], tuple[Iterator[dict], int]]:
-    """
-    Create JAX iterator from TFRecords (has side effects: file I/O).
-    
-    Args:
-        tfrecord_pattern: Glob pattern for TFRecord files
-        batch_size: Batch size
-        parser: Custom parser or None for default image parser
-        field_configs: Field preprocessing configs (computes stats if needed)
-        augment_fn: TF augmentation function (not applied to validation)
-        shuffle: Whether to shuffle
-        grayscale: Convert to grayscale (only if parser=None)
-        repeat: Repeat dataset indefinitely
-        crop_size: Generate overlapping crops (requires stride)
-        stride: Crop stride (required if crop_size set)
-        image_shape: (H, W) for efficient crop counting
-        val_split: Validation fraction (returns train/val if set)
-        split_seed: Seed for train/val split
-        save_stats_path: Save computed stats to JSON
-        precomputed_stats: DEPRECATED - use field_configs instead
-    
-    Returns:
-        (iterator, batches) or ((train_iter, train_batches), (val_iter, val_batches))
-    """
-    if crop_size is not None and stride is None:
-        raise ValueError("stride required when crop_size is set")
-    
-    files = sorted(glob.glob(tfrecord_pattern))
-    if not files:
-        raise ValueError(f"No files found: {tfrecord_pattern}")
-    
-    parser = _resolve_parser(parser, grayscale)
-    field_configs = _resolve_field_configs(files, parser, field_configs, precomputed_stats)
-    
-    if save_stats_path is not None:
-        save_field_stats(field_configs, save_stats_path)
-    
-    if val_split is not None:
-        train_files, val_files = split_files_train_val(files, val_split, split_seed)
-        
-        train_iter, train_batches = build_dataset_pipeline(
-            train_files, parser, field_configs, batch_size,
-            crop_size, stride, augment_fn, shuffle, repeat, image_shape,
-        )
-        val_iter, val_batches = build_dataset_pipeline(
-            val_files, parser, field_configs, batch_size,
-            crop_size, stride, None, shuffle, repeat, image_shape,
-        )
-        return (train_iter, train_batches), (val_iter, val_batches)
-    
-    iterator, batches = build_dataset_pipeline(
-        files, parser, field_configs, batch_size,
-        crop_size, stride, augment_fn, shuffle, repeat, image_shape,
-    )
-    return iterator, batches
-
-
-def create_tfrecord_iterator(
-    tfrecord_pattern: str,
-    batch_size: int = 32,
-    precomputed_stats: tuple[float, float] | None = None,
-    augment_fn: Callable[[dict[str, tf.Tensor]], dict[str, tf.Tensor]] | None = None,
-    shuffle: bool = True,
-    grayscale: bool = True,
-    repeat: bool = True,
+    field_configs: dict[str, Callable],
+    batch_size: int,
+    crop_size: int | None,
+    stride: int | None,
+    augment_fn: Callable[[dict[str, tf.Tensor]], dict[str, tf.Tensor]] | None,
+    shuffle: bool,
+    repeat: bool,
+    image_shape: tuple[int, int],
 ) -> tuple[Iterator[dict], int]:
     """
-    Create a JAX dataloader from TFRecords (has side effects: file I/O).
-    
-    Note: This function is maintained for backward compatibility.
-    New code should use create_iterator() for more flexibility.
+    Build a single TF dataset pipeline (has side effects: file I/O).
     
     Args:
-        tfrecord_pattern: Glob pattern for TFRecord files
+        files: List of TFRecord file paths
+        parser: Parser function (tf.Tensor -> dict)
+        field_configs: Dictionary mapping field names to their configurations
         batch_size: Batch size
-        precomputed_stats: (mean, std) or None to compute from data
-        augment_fn: Optional TensorFlow augmentation function (dict -> dict)
-        shuffle: Whether to shuffle data
-        grayscale: Whether to convert images to grayscale
+        crop_size: Optional crop size
+        stride: Optional stride (required if crop_size is set)
+        augment_fn: Optional augmentation function
+        shuffle: Whether to shuffle
         repeat: Whether to repeat dataset indefinitely
+        image_shape: (height, width) for efficient crop counting
     
     Returns:
-        (iterator, batches_per_epoch)
+        (iterator, batches_per_epoch) tuple
     """
-    return create_iterator(
-        tfrecord_pattern=tfrecord_pattern,
-        batch_size=batch_size,
-        parser=None,  # Use default image parser
-        crop_size=None,  # No crops
-        stride=None,
-        precomputed_stats=precomputed_stats,
-        augment_fn=augment_fn,
-        shuffle=shuffle,
-        grayscale=grayscale,
-        repeat=repeat,
+    n_parallel = 6
+    
+    # Count samples BEFORE building the pipeline (to avoid consuming it)
+    if crop_size is not None:
+        n_images = count_tfrecord_samples(files)
+        crops_per_image = compute_num_crops(image_shape[0], image_shape[1], crop_size, stride)
+        n_samples = n_images * crops_per_image
+
+    else:
+        n_samples = count_tfrecord_samples(files)
+    
+    batches_per_epoch = n_samples // batch_size
+    
+    # Build dataset pipeline
+    dataset = tf.data.TFRecordDataset(files, num_parallel_reads=n_parallel).map(
+        parser, num_parallel_calls=n_parallel
     )
+    
+    # Generate crops if requested
+    if crop_size is not None:
+        crop_fn = partial(create_overlapping_crops, crop_size=crop_size, stride=stride)
+        dataset = dataset.map(crop_fn, num_parallel_calls=n_parallel)
+        dataset = dataset.unbatch()
+    
+    # Apply preprocessing/standardization
+    standardize_fn = create_standardize_fn(field_configs)
+    dataset = dataset.map(standardize_fn, num_parallel_calls=n_parallel)
+    
+    # Cache AFTER preprocessing
+    dataset = dataset.cache()
+    
+    # Apply augmentation AFTER cache
+    if augment_fn is not None:
+        dataset = dataset.map(augment_fn, num_parallel_calls=n_parallel)
+    
+    # Shuffle and repeat
+    if repeat:
+        dataset = dataset.repeat()
+    
+    if shuffle:
+        if crop_size:
+            buffer_size = min(10 * batch_size, n_samples // 2)
+        else:
+            buffer_size = min(16 * batch_size, n_samples)
+        dataset = dataset.shuffle(buffer_size=buffer_size, reshuffle_each_iteration=True)
+    
+    # Batch and prefetch
+    dataset = dataset.batch(batch_size, drop_remainder=True)
+    prefetch_size = 8 if crop_size else 4
+    dataset = dataset.prefetch(prefetch_size)
+    
+    # Convert to JAX
+    iterator = map(partial(to_jax, dtype=jnp.float32), dataset)
+    
+    return iterator, batches_per_epoch
+

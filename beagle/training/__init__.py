@@ -25,7 +25,6 @@ from beagle.training.metrics import (
 from beagle.training.checkpoint import (
     save_checkpoint,
     load_checkpoint,
-    load_params,
     save_config,
     load_config,
     save_metrics_history,
@@ -63,7 +62,6 @@ __all__ = [
     # Checkpoints
     "save_checkpoint",
     "load_checkpoint",
-    "load_params",
     "save_config",
     "load_config",
     "save_metrics_history",

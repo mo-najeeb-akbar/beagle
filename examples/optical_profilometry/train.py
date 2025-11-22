@@ -19,12 +19,12 @@ from beagle.training import TrainState, train_loop, save_config, save_metrics_hi
 from beagle.visualization import create_viz_callback, VizConfig
 
 # Import from parent directory
-from data_loader import create_polymer_iterator, compute_polymer_stats
+from data_loader import create_polymer_iterator
 
 
 CONFIG = {
     "learning_rate": 0.001,
-    "num_epochs": 10,  
+    "num_epochs": 2,  
     "batch_size": 32,
     "base_features": 32,
     "latent_dim": 128,
@@ -130,35 +130,29 @@ def main():
     
     # Load data with train/val split
     print("Loading polymer dataset with train/val split...")
-    (train_iter, train_batches), (val_iter, val_batches), img_shape = create_polymer_iterator(
+    train_iter, train_batches = create_polymer_iterator(
         data_dir=data_dir,
         batch_size=CONFIG['batch_size'],
         crop_size=CONFIG['crop_size'],
         stride=CONFIG['crop_overlap'],
         shuffle=True,
         augment=True,
-        val_split=CONFIG['val_split'],
-        split_seed=CONFIG['split_seed'],
-        save_stats=True,
-        stats_path=f"{exp_dir}/polymer_stats.json",
     )
     
     print(f"Train batches per epoch: {train_batches}")
-    print(f"Val batches per epoch: {val_batches}")
-    print(f"Image shape: {img_shape}")
+
     
     # Training step and visualization
     train_step_fn = create_train_step()
     
-    # Get validation batch for visualization (no augmentation)
-    viz_batch = next(val_iter)
     
-    viz_config = VizConfig(
-        plot_every=5,
-        num_samples=4,
-        output_dir=f"{exp_dir}/viz"
-    )
-    viz_callback = create_viz_callback(create_viz_fn(model.apply), viz_config)
+    # TODO: reenable validation set and visualization
+    # viz_config = VizConfig(
+    #     plot_every=5,
+    #     num_samples=4,
+    #     output_dir=f"{exp_dir}/viz"
+    # )
+    # viz_callback = create_viz_callback(create_viz_fn(model.apply), viz_config)
     
     # Training data iterator function
     def data_fn():
@@ -177,8 +171,8 @@ def main():
         num_batches=train_batches,
         rng_key=train_key,
         checkpoint_dir=exp_dir,
-        viz_callback=viz_callback,
-        viz_batch=viz_batch,  # Use validation batch for visualization
+        # viz_callback=viz_callback,
+        # viz_batch=viz_batch,  # Use validation batch for visualization
     )
     
     # Save results

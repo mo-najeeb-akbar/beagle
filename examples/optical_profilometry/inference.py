@@ -23,7 +23,7 @@ except ImportError:
 from beagle.training import TrainState, load_checkpoint, load_config
 from beagle.network.wavelet_vae import VAE
 
-from data_loader import create_polymer_iterator_from_saved_stats
+from data_loader import create_polymer_iterator
 
 
 def normalize_to_uint8(array: np.ndarray) -> np.ndarray:
@@ -105,11 +105,6 @@ def run_inference(
     dummy = jnp.ones((1, 256, 256, 1))
     variables = model.init(key, dummy, random.key(0), training=True)
     
-    # Dummy optimizer for loading state
-    import optax
-    tx = optax.adamw(config['learning_rate'])
-    state = TrainState.create(apply_fn=model.apply, params=variables['params'], tx=tx)
-    
     # Find checkpoint path (try final first, then latest numbered)
     checkpoint_path = checkpoint_dir / "checkpoint_final"
     if not checkpoint_path.exists():
@@ -120,50 +115,32 @@ def run_inference(
         checkpoint_path = checkpoints[-1]
     
     print(f"Loading checkpoint: {checkpoint_path}")
-    state = load_checkpoint(str(checkpoint_path), state)
+    model_data = load_checkpoint(str(checkpoint_path))
+    params = model_data['params']
     print(f"Checkpoint loaded successfully")
     print(f"Data directory: {data_dir}")
     
     # Create iterator without augmentation, using saved stats from training
     print("Creating data iterator (no augmentation, no shuffle)...")
     
-    # Try to find stats file: first in checkpoint dir, then in data dir
-    stats_path = checkpoint_dir / "polymer_stats.json"
-    if not stats_path.exists():
-        stats_path = data_dir / "polymer_stats.json"
-        print(f"Note: Using stats from data directory: {stats_path}")
-    else:
-        print(f"Using stats from checkpoint directory: {stats_path}")
-    
-    if not stats_path.exists():
-        raise FileNotFoundError(
-            f"Could not find polymer_stats.json in either:\n"
-            f"  - {checkpoint_dir / 'polymer_stats.json'}\n"
-            f"  - {data_dir / 'polymer_stats.json'}\n"
-            f"Please ensure stats were saved during training."
-        )
-    
-    iterator, num_batches, img_shape = create_polymer_iterator_from_saved_stats(
+    iterator, num_batches = create_polymer_iterator(
         data_dir=data_dir,
-        stats_path=stats_path,
         batch_size=config['batch_size'],
         crop_size=config.get('crop_size', 256),
-        stride=config.get('crop_size', 256),  # No overlap for inference
+        stride=config.get('crop_size', 256),
         shuffle=False,
         augment=False,
-        val_split=None,  # Use all data
-        split_seed=config.get('split_seed', 42),
+        load_stats=True,
     )
     
     print(f"Processing {num_batches} batches...")
-    print(f"Image shape: {img_shape}")
     
     # Run inference
     @jax.jit
-    def infer(state: TrainState, batch: dict, rng_key):
+    def infer(params: dict, batch: dict, rng_key):
         images = batch['depth']
-        x_recon, _, _, _ = state.apply_fn(
-            {'params': state.params}, images, training=False, key=rng_key
+        x_recon, _, _, _ = model.apply(
+            {'params': params}, images, training=False, key=rng_key
         )
         return x_recon
     
@@ -176,7 +153,7 @@ def run_inference(
     for batch in batch_iter:
         # Run inference
         key, infer_key = random.split(key)
-        reconstructions = infer(state, batch, infer_key)
+        reconstructions = infer(params, batch, infer_key)
         
         # Convert to numpy
         originals = np.array(batch['depth'])

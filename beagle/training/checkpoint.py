@@ -28,7 +28,7 @@ def save_checkpoint(
     
     # Create checkpoint data
     ckpt = {
-        'model': state.params,
+        'params': state.params,
         'opt_state': state.opt_state
     }
     
@@ -47,7 +47,7 @@ def save_checkpoint(
     checkpointer.save(os.path.abspath(ckpt_path), ckpt, save_args=save_args)
 
 
-def load_params(
+def load_checkpoint(
     checkpoint_path: str,
 ) -> dict[str, Any]:
     """Load checkpoint and return parameters.
@@ -57,35 +57,7 @@ def load_params(
     """
     checkpointer = orbax.checkpoint.PyTreeCheckpointer()
     restored = checkpointer.restore(os.path.abspath(checkpoint_path))
-    return restored['model']
-
-
-def load_checkpoint(
-    checkpoint_path: str,
-    state: TrainState
-) -> TrainState:
-    """Load checkpoint and update state (returns new state).
-    
-    Args:
-        checkpoint_path: Path to checkpoint directory
-        state: Template state to restore into
-        
-    Returns:
-        New TrainState with loaded parameters
-    """
-    checkpointer = orbax.checkpoint.PyTreeCheckpointer()
-    restored = checkpointer.restore(os.path.abspath(checkpoint_path))
-    
-    # Update state with loaded params
-    new_state = state.replace(
-        params=restored['model'],
-        opt_state=restored['opt_state']
-    )
-    
-    if 'batch_stats' in restored:
-        new_state = new_state.replace(batch_stats=restored['batch_stats'])
-    
-    return new_state
+    return restored
 
 
 def save_config(config: dict[str, Any], output_dir: str) -> None:

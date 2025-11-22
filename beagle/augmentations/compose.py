@@ -1,11 +1,3 @@
-"""
-Composable augmentation utilities.
-
-Makes it easy to:
-1. Write custom augmentations as simple functions
-2. Compose multiple augmentations
-3. Use library augmentations (albumentations, imgaug, etc.)
-"""
 from __future__ import annotations
 
 from typing import Callable, Any
@@ -64,7 +56,7 @@ def apply_to_field(
     """
     def augment(data_dict: dict[str, tf.Tensor]) -> dict[str, tf.Tensor]:
         if field_name in data_dict:
-            data_dict[field_name] = transform_fn(data_dict[field_name])
+            return {**data_dict, field_name: transform_fn(data_dict[field_name])}
         return data_dict
     
     return augment
@@ -92,10 +84,12 @@ def apply_to_fields(
         ... )
     """
     def augment(data_dict: dict[str, tf.Tensor]) -> dict[str, tf.Tensor]:
-        for field in field_names:
-            if field in data_dict:
-                data_dict[field] = transform_fn(data_dict[field])
-        return data_dict
+        updates = {
+            field: transform_fn(data_dict[field])
+            for field in field_names
+            if field in data_dict
+        }
+        return {**data_dict, **updates}
     
     return augment
 
@@ -139,11 +133,54 @@ def apply_geometric(
         
         img_transformed, mask_transformed = transform_fn(img, mask)
         
-        data_dict[image_field] = img_transformed
+        updates = {image_field: img_transformed}
         if mask_field and mask_transformed is not None:
-            data_dict[mask_field] = mask_transformed
+            updates[mask_field] = mask_transformed
         
-        return data_dict
+        return {**data_dict, **updates}
+    
+    return augment
+
+
+def apply_same_transform_to_all(
+    fields: list[str],
+    transform_fn: Callable[[list[tf.Tensor]], list[tf.Tensor]],
+) -> AugmentFn:
+    """
+    Apply same random transform to multiple fields consistently (pure).
+    
+    Useful for geometric augmentations where you need the same random
+    transformation applied to images, masks, depth maps, etc.
+    
+    Args:
+        fields: List of field names to transform together
+        transform_fn: Function that takes list of tensors and returns list
+                      The same random parameters should be used for all tensors
+    
+    Returns:
+        Augmentation function
+    
+    Example:
+        >>> def consistent_flip(tensors):
+        ...     # Same random decision for all tensors
+        ...     do_flip = tf.random.uniform([]) > 0.5
+        ...     if do_flip:
+        ...         return [tf.image.flip_left_right(t) for t in tensors]
+        ...     return tensors
+        >>> 
+        >>> flip = apply_same_transform_to_all(['image', 'mask', 'depth'], consistent_flip)
+        >>> data = flip({'image': img, 'mask': mask, 'depth': depth_map})
+    """
+    def augment(data_dict: dict[str, tf.Tensor]) -> dict[str, tf.Tensor]:
+        present_fields = [f for f in fields if f in data_dict]
+        if not present_fields:
+            return data_dict
+        
+        tensors = [data_dict[f] for f in present_fields]
+        transformed = transform_fn(tensors)
+        
+        updates = dict(zip(present_fields, transformed))
+        return {**data_dict, **updates}
     
     return augment
 
@@ -151,83 +188,73 @@ def apply_geometric(
 # Common augmentation builders (returns TensorFlow augmentation functions)
 
 def random_flip_left_right(
-    fields: list[str] | None = None,
-    image_field: str = 'image',
-    mask_field: str | None = 'mask',
+    fields: list[str] = ['image'],
+    probability: float = 0.5,
 ) -> AugmentFn:
     """
-    Random horizontal flip (pure).
+    Random horizontal flip applied consistently to all specified fields (pure).
     
     Args:
-        fields: If provided, apply to these specific fields
-                If None, uses geometric mode (image + mask)
-        image_field: Image field name for geometric mode
-        mask_field: Mask field name for geometric mode
+        fields: List of field names to flip (e.g., ['image', 'mask', 'depth'])
+        probability: Probability of applying flip (default: 0.5)
+    
+    Returns:
+        Augmentation function
+    
+    Example:
+        >>> # Flip image and mask together
+        >>> flip = random_flip_left_right(fields=['image', 'mask'])
+        >>> data = flip({'image': img, 'mask': mask})
+    """
+    def transform(tensors: list[tf.Tensor]) -> list[tf.Tensor]:
+        do_flip = tf.random.uniform([]) < probability
+        if do_flip:
+            return [tf.image.flip_left_right(t) for t in tensors]
+        return tensors
+    
+    return apply_same_transform_to_all(fields, transform)
+
+
+def random_flip_up_down(
+    fields: list[str] = ['image'],
+    probability: float = 0.5,
+) -> AugmentFn:
+    """
+    Random vertical flip applied consistently to all specified fields (pure).
+    
+    Args:
+        fields: List of field names to flip (e.g., ['image', 'mask', 'depth'])
+        probability: Probability of applying flip (default: 0.5)
     
     Returns:
         Augmentation function
     """
-    if fields is not None:
-        return apply_to_fields(
-            fields,
-            lambda x: tf.image.random_flip_left_right(x),
-        )
-    
-    def transform(img: tf.Tensor, mask: tf.Tensor | None) -> tuple[tf.Tensor, tf.Tensor | None]:
-        # Use same random value for both
-        do_flip = tf.random.uniform([]) > 0.5
+    def transform(tensors: list[tf.Tensor]) -> list[tf.Tensor]:
+        do_flip = tf.random.uniform([]) < probability
         if do_flip:
-            img = tf.image.flip_left_right(img)
-            if mask is not None:
-                mask = tf.image.flip_left_right(mask)
-        return img, mask
+            return [tf.image.flip_up_down(t) for t in tensors]
+        return tensors
     
-    return apply_geometric(transform, image_field, mask_field)
-
-
-def random_flip_up_down(
-    fields: list[str] | None = None,
-    image_field: str = 'image',
-    mask_field: str | None = 'mask',
-) -> AugmentFn:
-    """Random vertical flip (pure)."""
-    if fields is not None:
-        return apply_to_fields(
-            fields,
-            lambda x: tf.image.random_flip_up_down(x),
-        )
-    
-    def transform(img: tf.Tensor, mask: tf.Tensor | None) -> tuple[tf.Tensor, tf.Tensor | None]:
-        do_flip = tf.random.uniform([]) > 0.5
-        if do_flip:
-            img = tf.image.flip_up_down(img)
-            if mask is not None:
-                mask = tf.image.flip_up_down(mask)
-        return img, mask
-    
-    return apply_geometric(transform, image_field, mask_field)
+    return apply_same_transform_to_all(fields, transform)
 
 
 def random_rotate_90(
-    fields: list[str] | None = None,
-    image_field: str = 'image',
-    mask_field: str | None = 'mask',
+    fields: list[str] = ['image'],
 ) -> AugmentFn:
-    """Random 90-degree rotation (pure)."""
-    if fields is not None:
-        def rotate(x: tf.Tensor) -> tf.Tensor:
-            k = tf.random.uniform(shape=[], minval=0, maxval=4, dtype=tf.int32)
-            return tf.image.rot90(x, k=k)
-        return apply_to_fields(fields, rotate)
+    """
+    Random 90-degree rotation applied consistently to all specified fields (pure).
     
-    def transform(img: tf.Tensor, mask: tf.Tensor | None) -> tuple[tf.Tensor, tf.Tensor | None]:
+    Args:
+        fields: List of field names to rotate (e.g., ['image', 'mask', 'depth'])
+    
+    Returns:
+        Augmentation function
+    """
+    def transform(tensors: list[tf.Tensor]) -> list[tf.Tensor]:
         k = tf.random.uniform(shape=[], minval=0, maxval=4, dtype=tf.int32)
-        img = tf.image.rot90(img, k=k)
-        if mask is not None:
-            mask = tf.image.rot90(mask, k=k)
-        return img, mask
+        return [tf.image.rot90(t, k=k) for t in tensors]
     
-    return apply_geometric(transform, image_field, mask_field)
+    return apply_same_transform_to_all(fields, transform)
 
 
 def random_brightness(

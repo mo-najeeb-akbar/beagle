@@ -13,7 +13,6 @@ from beagle.training import (
     train_epoch,
     save_checkpoint,
     load_checkpoint,
-    load_params,
     create_inference_fn,
 )
 
@@ -29,6 +28,14 @@ from beagle.profiling import (
     format_epoch_summary,
 )
 
+# Dataset preprocessing utilities
+from beagle.dataset import (
+    compute_fields_mean_std,
+    compute_fields_min_max,
+    save_field_stats,
+    load_field_stats,
+)
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -41,6 +48,7 @@ __all__ = [
     "save_checkpoint",
     "load_checkpoint",
     "create_inference_fn",
+
     # Profiling
     "StepProfile",
     "ProfileSummary",
@@ -50,5 +58,11 @@ __all__ = [
     "format_step_metrics",
     "compute_epoch_summary",
     "format_epoch_summary",
+
+    # Stats
+    "compute_fields_mean_std",
+    "compute_fields_min_max",
+    "save_field_stats",
+    "load_field_stats",
 ]
 
