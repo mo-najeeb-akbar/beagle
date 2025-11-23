@@ -1,7 +1,7 @@
 from beagle.conversions.dispatch import ConversionRegistry, transfer_weights
 from beagle.conversions.extract import extract_layer_refs, extract_structure
 from beagle.conversions.frameworks import create_pytorch_registry, create_tf_registry
-
+from beagle.conversions.hierarchical import transfer_hierarchical_params
 from beagle.conversions.traverse import create_name_mapping, traverse_paired
 from beagle.conversions.types import ConversionResult, Tolerance
 from beagle.conversions.verify import verify_transfer
@@ -15,6 +15,7 @@ __all__ = [
     "create_tf_registry",
     "extract_layer_refs",
     "extract_structure",
+    "transfer_hierarchical_params",
     "transfer_weights",
     "traverse_paired",
     "verify_transfer",

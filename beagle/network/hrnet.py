@@ -11,7 +11,7 @@ ModuleDef = Any
 
 
 def _up_blocks(
-    self: Any, x: jnp.ndarray, steps_up: int, train: bool
+    self: Any, x: jnp.ndarray, steps_up: int, train: bool, name_prefix: str = "up"
 ) -> jnp.ndarray:
     """Upsample feature maps with bilinear interpolation."""
     norm = partial(self.norm, use_running_average=not train)
@@ -35,7 +35,7 @@ def _up_blocks(
 
 
 def _down_blocks(
-    self: Any, x: jnp.ndarray, steps_down: int, override_use_relu: bool, train: bool
+    self: Any, x: jnp.ndarray, steps_down: int, override_use_relu: bool, train: bool, name_prefix: str = "down"
 ) -> jnp.ndarray:
     """Downsample feature maps with strided convolutions."""
     norm = partial(self.norm, use_running_average=not train)
@@ -54,7 +54,7 @@ def _down_blocks(
     return x
 
 
-def _resnet_block(self: Any, x: jnp.ndarray, train: bool) -> jnp.ndarray:
+def _resnet_block(self: Any, x: jnp.ndarray, train: bool, name_prefix: str = "resnet") -> jnp.ndarray:
     """Residual block with normalization."""
     norm = partial(self.norm, use_running_average=not train)
     batch, height, width, channels = x.shape
@@ -76,7 +76,7 @@ def _resnet_block(self: Any, x: jnp.ndarray, train: bool) -> jnp.ndarray:
 
 
 def _down_with_skip(
-    self: Any, x: jnp.ndarray, features: int, train: bool
+    self: Any, x: jnp.ndarray, features: int, train: bool, name_prefix: str = "down_skip"
 ) -> jnp.ndarray:
     """Downsample with skip connection."""
     norm = partial(self.norm, use_running_average=not train)
@@ -99,7 +99,7 @@ def _down_with_skip(
 
 
 def _down_with_skip_beginning(
-    self: Any, x: jnp.ndarray, features: int, train: bool
+    self: Any, x: jnp.ndarray, features: int, train: bool, name_prefix: str = "stem"
 ) -> jnp.ndarray:
     """Initial downsampling with skip connection."""
     norm = partial(self.norm, use_running_average=not train)
@@ -127,6 +127,7 @@ def _fuse_blocks(
     channels: int,
     use_concatenation: bool,
     train: bool,
+    name_prefix: str = "fuse",
 ) -> jnp.ndarray:
     """Fuse multiple resolution blocks together."""
     norm = partial(self.norm, use_running_average=not train)
@@ -137,7 +138,10 @@ def _fuse_blocks(
         fused = sum(blocks)
     fused = nn.relu(fused)
     fused = nn.Conv(
-        features=channels, kernel_size=(3, 3), padding="SAME", use_bias=False
+        features=channels,
+        kernel_size=(3, 3),
+        padding="SAME",
+        use_bias=False,
     )(fused)
     fused = norm()(fused)
     fused = nn.relu(fused)
@@ -150,7 +154,7 @@ def _basic_block(
     channels: int,
     train: bool,
     kernel_size: int = 3,
-    name: str | None = None,
+    name_prefix: str = "basic",
 ) -> jnp.ndarray:
     """Basic conv-norm-relu block."""
     norm = partial(self.norm, use_running_average=not train)
@@ -180,8 +184,8 @@ class HRNetBB(nn.Module):
     @nn.compact
     def __call__(self, x: jnp.ndarray, train: bool = True) -> jnp.ndarray:
         """Process input through multi-resolution stages."""
-        x = _down_with_skip_beginning(self, x, self.features * 2, train)
-        x = _down_with_skip_beginning(self, x, self.features, train)
+        x = _down_with_skip_beginning(self, x, self.features * 2, train, name_prefix="stem_0")
+        x = _down_with_skip_beginning(self, x, self.features, train, name_prefix="stem_1")
 
         batch, height, width, channels = x.shape
         blocks = [x]
@@ -191,57 +195,61 @@ class HRNetBB(nn.Module):
             new_blocks = []
             new_block_sizes = []
             lowest_res = 1 / (2 ** (stage + 1))
-            for block, block_size in zip(blocks, block_sizes):
+            for block_idx, (block, block_size) in enumerate(zip(blocks, block_sizes)):
                 num_steps_up = int(np.abs(np.log2(block_size)))
                 num_steps_down = int(np.abs(np.log2(lowest_res / block_size)))
 
                 for step in range(num_steps_up):
                     current_block = block
                     curr_res = block_size * (2 ** (step + 1))
+                    name = f"stage_{stage}_block_{block_idx}_up_res_{curr_res}"
                     if stage == (self.num_stages - 1):
                         if self.target_res == curr_res:
                             current_block = _up_blocks(
-                                self, current_block, step + 1, train
+                                self, current_block, step + 1, train, name_prefix=name
                             )
                             resolution_groups[curr_res].append(current_block)
                     else:
-                        current_block = _up_blocks(self, current_block, step + 1, train)
+                        current_block = _up_blocks(self, current_block, step + 1, train, name_prefix=name)
                         resolution_groups[curr_res].append(current_block)
 
                 for step in range(num_steps_down):
                     current_block = block
                     curr_res = block_size * (1 / (2 ** (step + 1)))
                     use_relu_last_ds = step == (num_steps_down - 1)
+                    name = f"stage_{stage}_block_{block_idx}_down_res_{curr_res}"
                     if stage == (self.num_stages - 1):
                         if self.target_res == curr_res:
                             current_block = _down_blocks(
-                                self, current_block, step + 1, use_relu_last_ds, train
+                                self, current_block, step + 1, use_relu_last_ds, train, name_prefix=name
                             )
                             resolution_groups[curr_res].append(current_block)
                     else:
                         current_block = _down_blocks(
-                            self, current_block, step + 1, use_relu_last_ds, train
+                            self, current_block, step + 1, use_relu_last_ds, train, name_prefix=name
                         )
                         resolution_groups[curr_res].append(current_block)
 
+                name = f"stage_{stage}_block_{block_idx}_resnet_res_{block_size}"
                 if stage == (self.num_stages - 1):
                     if self.target_res == block_size:
                         current_block = block
-                        current_block = _resnet_block(self, current_block, train)
+                        current_block = _resnet_block(self, current_block, train, name_prefix=name)
                         resolution_groups[block_size].append(current_block)
                 else:
                     current_block = block
-                    current_block = _resnet_block(self, current_block, train)
+                    current_block = _resnet_block(self, current_block, train, name_prefix=name)
                     resolution_groups[block_size].append(current_block)
 
-            for resolution, resolution_blocks in resolution_groups.items():
+            for res_idx, (resolution, resolution_blocks) in enumerate(resolution_groups.items()):
                 if len(resolution_blocks) == 1:
                     new_blocks.append(resolution_blocks[0])
                     new_block_sizes.append(resolution)
                 else:
                     use_concat_last_step = stage == (self.num_stages - 1)
+                    name = f"stage_{stage}_fuse_res_{resolution}_idx_{res_idx}"
                     fused_block = _fuse_blocks(
-                        self, resolution_blocks, channels, use_concat_last_step, train
+                        self, resolution_blocks, channels, use_concat_last_step, train, name_prefix=name
                     )
                     new_blocks.append(fused_block)
                     new_block_sizes.append(resolution)
@@ -255,7 +263,12 @@ class HRNetBB(nn.Module):
 
 
 class MoNet(nn.Module):
-    """Multi-output network based on HRNet backbone."""
+    """Multi-output network based on HRNet backbone.
+    
+    Supports multiple output heads with optional upsampling.
+    Output descriptor format: (num_outputs, use_sigmoid, upsample_steps)
+    where upsample_steps is optional (defaults to 0).
+    """
 
     num_stages: int
     features: int
@@ -275,12 +288,19 @@ class MoNet(nn.Module):
         backbone_out = self.backbone(x, (train and self.train_bb))
 
         outputs = []
-        for descriptor in self.outputs:
-            num_outs, use_sigmoid = descriptor
-            x = _basic_block(self, backbone_out, self.features, train)
-            x = _basic_block(self, x, self.features, train)
-            x = _basic_block(self, x, num_outs, train, kernel_size=1)
-            out = nn.Conv(features=num_outs, kernel_size=(1, 1), use_bias=True)(x)
+        for head_idx, descriptor in enumerate(self.outputs):
+            if len(descriptor) == 2:
+                num_outs, use_sigmoid = descriptor
+                upsample_steps = 0
+            else:
+                num_outs, use_sigmoid, upsample_steps = descriptor
+            
+            head = _basic_block(self, backbone_out, self.features, train)
+            head = _basic_block(self, head, self.features, train)
+            head = _basic_block(self, head, num_outs, train, kernel_size=1)
+            if upsample_steps > 0:
+                head = _up_blocks(self, head, upsample_steps, train)
+            out = nn.Conv(features=num_outs, kernel_size=(1, 1), use_bias=True)(head)
             if use_sigmoid:
                 out = nn.sigmoid(out)
             outputs.append(out)
@@ -307,7 +327,7 @@ class EmbedNet(nn.Module):
         norm = partial(self.norm, use_running_average=not train)
 
         x = self.backbone(x, (train and self.train_bb))
-        for _ in range(5):
+        for i in range(5):
             x = nn.Conv(
                 features=self.num_features,
                 kernel_size=(3, 3),

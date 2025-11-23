@@ -1,6 +1,6 @@
-"""Train HRNet for root tip mask prediction at 1/4 resolution.
+"""Train MoNet for root tip mask prediction at full resolution.
 
-Run: make run CMD='python examples/tip_shape/train_hrnet.py /data/root_tip_tfrecords'
+Run: make run CMD='python examples/tip_shape/train.py /data/root_tip_tfrecords'
 """
 
 from __future__ import annotations
@@ -13,13 +13,12 @@ import jax
 import jax.numpy as jnp
 import jax.random as random
 import optax
-from jax import image as jax_image
 
+from beagle.network.hrnet import MoNet
 from beagle.training import TrainState, train_loop, save_config, save_metrics_history
 from beagle.visualization import create_viz_callback, VizConfig
 
 from data_loader import create_root_tip_iterator
-from mask_net import MaskNet
 
 
 CONFIG = {
@@ -28,8 +27,10 @@ CONFIG = {
     "batch_size": 8,
     "num_stages": 3,
     "features": 32,
-    "target_res": 1.0,  # 1.0 = 128x128 (after 2x initial downsampling from 512)
+    "target_res": 1.0,
     "input_size": 512,
+    "upsample_to_full_res": True,
+    "train_backbone": True,
     "shuffle": True,
     "augment": True,
 }
@@ -38,7 +39,7 @@ CONFIG = {
 def binary_cross_entropy_loss(
     predictions: jnp.ndarray, targets: jnp.ndarray, eps: float = 1e-7
 ) -> jnp.ndarray:
-    """Binary cross-entropy loss (pure function).
+    """Binary cross-entropy loss from probabilities (pure function).
     
     Args:
         predictions: Predicted probabilities after sigmoid [0, 1]
@@ -53,16 +54,6 @@ def binary_cross_entropy_loss(
     return jnp.mean(loss)
 
 
-def resize_mask(mask: jnp.ndarray, target_size: int) -> jnp.ndarray:
-    """Resize mask to target resolution (pure function)."""
-    batch, height, width, channels = mask.shape
-    return jax_image.resize(
-        mask,
-        shape=(batch, target_size, target_size, channels),
-        method="nearest",
-    )
-
-
 def create_train_step():
     """Create JIT-compiled training step."""
     @jax.jit
@@ -70,23 +61,20 @@ def create_train_step():
         images = batch["image"]
         masks_full = batch["mask"]
         
-        # Downsample masks to 1/4 resolution (128x128)
-        masks_quarter = resize_mask(masks_full, CONFIG["input_size"] // 4)
-        
         def loss_fn(params):
-            # Forward pass - HRNet outputs at target resolution
-            predictions, updates = state.apply_fn(
+            # Forward pass - MoNet returns list of outputs + backbone
+            outputs, updates = state.apply_fn(
                 {"params": params, "batch_stats": state.batch_stats},
                 images,
                 train=True,
                 mutable=["batch_stats"],
             )
             
-            # Apply sigmoid to get probabilities
-            predictions_prob = jax.nn.sigmoid(predictions)
+            # First output is mask logits (already at full resolution with sigmoid)
+            mask_pred = outputs[0]
             
             # Binary cross-entropy loss
-            loss = binary_cross_entropy_loss(predictions_prob, masks_quarter)
+            loss = binary_cross_entropy_loss(mask_pred, masks_full)
             
             return loss, updates
         
@@ -133,12 +121,15 @@ def create_viz_fn(model_apply):
         images = batch["image"]
         masks_full = batch["mask"]
         
-        # Forward pass
-        predictions = model_apply({"params": state.params, "batch_stats": state.batch_stats}, images, train=False)
-        predictions_prob = jax.nn.sigmoid(predictions)
+        # Forward pass - MoNet returns list of outputs + backbone
+        outputs = model_apply(
+            {"params": state.params, "batch_stats": state.batch_stats},
+            images,
+            train=False
+        )
         
-        # Resize predicted mask to full resolution for visualization
-        pred_mask_full = resize_mask(predictions_prob, CONFIG["input_size"])
+        # First output is mask prediction (already sigmoid applied and full res)
+        pred_mask_full = outputs[0]
         
         # Denormalize image for visualization (approximate)
         # Assuming z-score normalization, rescale to [0, 1]
@@ -172,17 +163,29 @@ def main():
     
     # Setup experiment
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    exp_dir = f"/data/experiments/hrnet_masks_{timestamp}"
+    exp_dir = f"/data/experiments/monet_masks_{timestamp}"
     save_config(CONFIG, exp_dir)
     
     print(f"Experiment: {exp_dir}")
     print(f"JAX devices: {jax.devices()}")
     
-    # Initialize mask prediction model
-    model = MaskNet(
+    # Configure outputs: (num_outputs, use_sigmoid, upsample_steps)
+    # Backbone at target_res=1.0 is 1/4 of input (after 2x initial downsample)
+    # To reach full resolution, need 2 upsample steps
+    if CONFIG["upsample_to_full_res"]:
+        outputs = [(1, True, 2)]  # 1 channel, sigmoid, 2x upsample
+        output_res_str = "full resolution (512x512)"
+    else:
+        outputs = [(1, True)]  # 1 channel, sigmoid, no upsample (128x128)
+        output_res_str = "1/4 resolution (128x128)"
+    
+    # Initialize multi-output model
+    model = MoNet(
         num_stages=CONFIG["num_stages"],
         features=CONFIG["features"],
         target_res=CONFIG["target_res"],
+        train_bb=CONFIG["train_backbone"],
+        outputs=outputs,
     )
     
     key = random.key(42)
@@ -192,6 +195,8 @@ def main():
     dummy = jnp.ones((1, CONFIG["input_size"], CONFIG["input_size"], 1))
     variables = model.init(init_key, dummy, train=False)
     params, batch_stats = variables['params'], variables['batch_stats']
+    
+    print(f"Model output: {output_res_str}")
     
     # Create training state
     tx = optax.adamw(CONFIG["learning_rate"])
@@ -227,7 +232,8 @@ def main():
     # Train
     print(f"Training for {CONFIG['num_epochs']} epochs...")
     print(f"Input size: {CONFIG['input_size']}x{CONFIG['input_size']}")
-    print(f"Output size: {CONFIG['input_size']//4}x{CONFIG['input_size']//4} (1/4 resolution)")
+    print(f"Backbone: {CONFIG['num_stages']} stages, {CONFIG['features']} features")
+    print(f"Train backbone: {CONFIG['train_backbone']}")
     
     key, train_key = random.split(key)
     final_state, history = train_loop(
