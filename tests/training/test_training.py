@@ -175,23 +175,18 @@ def test_save_and_load_checkpoint():
         ckpt_path = os.path.join(tmpdir, "checkpoint_10")
         assert os.path.exists(ckpt_path)
         
-        # Create new state with different params
-        new_vars = model.init(random.PRNGKey(42), x)
-        new_state = TrainState.create(
-            apply_fn=model.apply,
-            params=new_vars['params'],
-            tx=tx
-        )
-        
         # Load checkpoint
-        restored_state = load_checkpoint(ckpt_path, new_state)
+        restored = load_checkpoint(ckpt_path)
         
         # Check params match original
         param_tree_original = jax.tree_util.tree_leaves(state.params)
-        param_tree_restored = jax.tree_util.tree_leaves(restored_state.params)
+        param_tree_restored = jax.tree_util.tree_leaves(restored['params'])
         
-        for orig, restored in zip(param_tree_original, param_tree_restored):
-            assert jnp.allclose(orig, restored)
+        for orig, restored_param in zip(param_tree_original, param_tree_restored):
+            assert jnp.allclose(orig, restored_param)
+        
+        # Check opt_state exists
+        assert 'opt_state' in restored
 
 
 def test_save_checkpoint_with_batch_stats():
@@ -224,16 +219,16 @@ def test_save_checkpoint_with_batch_stats():
         assert os.path.exists(ckpt_path)
         
         # Load and verify batch_stats
-        new_vars = model.init(random.PRNGKey(42), x, train=True)
-        new_state = TrainState.create(
-            apply_fn=model.apply,
-            params=new_vars['params'],
-            batch_stats=new_vars['batch_stats'],
-            tx=tx
-        )
+        restored = load_checkpoint(ckpt_path)
+        assert 'batch_stats' in restored
+        assert restored['batch_stats'] is not None
         
-        restored_state = load_checkpoint(ckpt_path, new_state)
-        assert restored_state.batch_stats is not None
+        # Verify batch_stats values match original
+        batch_stats_original = jax.tree_util.tree_leaves(state.batch_stats)
+        batch_stats_restored = jax.tree_util.tree_leaves(restored['batch_stats'])
+        
+        for orig, restored_stat in zip(batch_stats_original, batch_stats_restored):
+            assert jnp.allclose(orig, restored_stat)
 
 
 def test_save_config():
