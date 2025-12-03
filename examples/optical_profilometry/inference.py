@@ -130,7 +130,7 @@ def run_inference(
         stride=config.get('crop_size', 256),
         shuffle=False,
         augment=False,
-        load_stats=True,
+        load_stats=None,
     )
     
     print(f"Processing {num_batches} batches...")
@@ -189,8 +189,8 @@ def main():
         sys.exit(1)
     
     checkpoint_dir = Path(sys.argv[1])
-    output_dir = Path(sys.argv[2])
-    data_dir = Path(sys.argv[3])
+    data_dir = Path(sys.argv[2])
+    output_dir = Path(sys.argv[3])
     
     if not checkpoint_dir.exists():
         print(f"Error: Checkpoint directory does not exist: {checkpoint_dir}")

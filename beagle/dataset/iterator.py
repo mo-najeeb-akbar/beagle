@@ -116,16 +116,16 @@ def build_dataset_pipeline(
         dataset = dataset.map(crop_fn, num_parallel_calls=n_parallel)
         dataset = dataset.unbatch()
     
-    # Apply preprocessing/standardization
-    standardize_fn = create_standardize_fn(field_configs)
-    dataset = dataset.map(standardize_fn, num_parallel_calls=n_parallel)
-    
     # Cache AFTER preprocessing
     dataset = dataset.cache()
     
     # Apply augmentation AFTER cache
     if augment_fn is not None:
         dataset = dataset.map(augment_fn, num_parallel_calls=n_parallel)
+    
+    # Apply preprocessing/standardization
+    standardize_fn = create_standardize_fn(field_configs)
+    dataset = dataset.map(standardize_fn, num_parallel_calls=n_parallel)
     
     # Shuffle and repeat
     if repeat:

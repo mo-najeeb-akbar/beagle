@@ -30,7 +30,7 @@ def make_polymer_parser(
     """Create parser for polymer TFRecords."""
     def parse(example_proto: tf.Tensor) -> dict[str, tf.Tensor]:
         parsed = tf.io.parse_single_example(example_proto, feature_dict)
-        depth = tf.reshape(parsed['surface'], shape_dict['surface'] + [1])
+        depth = tf.reshape(parsed['depth'], shape_dict['depth'] + [1])
         depth = tf.where(tf.math.is_nan(depth), 0.0, depth)
         return {'depth': depth}
     return parse
@@ -68,7 +68,7 @@ def create_polymer_iterator(
     stride: int = 192,
     shuffle: bool = True,
     augment: bool = False,
-    load_stats: bool = False,
+    load_stats: bool = None,
 ) -> tuple:
 
     data_dir = Path(data_dir)
@@ -81,17 +81,21 @@ def create_polymer_iterator(
     parser = make_polymer_parser(feature_dict, shape_dict)
     
     # Compute statistics
-    if load_stats:
-        stats = load_field_stats(str(data_dir / "depth_stats.json"))
+    if load_stats is not None:
+        if load_stats:
+            stats = load_field_stats(str(data_dir / "depth_stats.json"))
+        else:
+            stats = compute_fields_mean_std(files, parser, ['depth'])
+            save_field_stats(str(data_dir / "depth_stats.json"), stats)
     else:
-        stats = compute_fields_mean_std(files, parser, ['depth'])
-        save_field_stats(str(data_dir / "depth_stats.json"), stats)
+        stats = None
     
     # Get image dimensions
-    img_height, img_width = shape_dict['surface']
+    img_height, img_width = shape_dict['depth']
     
     def z_score_norm(tensor: tf.Tensor) -> tf.Tensor:
-        return (tensor - stats['depth'][0]) / stats['depth'][1]
+        # return (tensor - stats['depth'][0]) / stats['depth'][1]
+        return (tensor  - 127.5) / 127.5
 
     field_configs = {
         'depth': z_score_norm
@@ -104,9 +108,9 @@ def create_polymer_iterator(
             random_flip_left_right(fields=['depth']),
             random_flip_up_down(fields=['depth']),
             random_rotate_90(fields=['depth']),
-            gaussian_noise(stddev=0.05, field='depth'),  # Add here
-            random_brightness(max_delta=0.1, field='depth'),
-            random_contrast(lower=0.95, upper=1.05, field='depth'),
+            # gaussian_noise(stddev=10.0, field='depth'),  # Add here
+            # random_brightness(max_delta=5.0, field='depth'),
+            # random_contrast(lower=0.95, upper=1.05, field='depth'),
         )
     
     # Create iterator with optional train/val split

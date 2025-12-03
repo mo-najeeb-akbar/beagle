@@ -22,6 +22,8 @@ from beagle.dataset import (
     serialize_float_array,
     load_tfr_dict,
 )
+import matplotlib.pyplot as plt
+
 
 
 def image_decoder(dat: Datum) -> Datum:
@@ -36,7 +38,14 @@ def image_decoder(dat: Datum) -> Datum:
     
     if no_data_count > 0:
         depth_map = depth_map.copy()
-        depth_map[no_data_mask] = np.nan
+        depth_map[no_data_mask] = 0.0
+    depth_map[depth_map < 0] = 0
+    # depth_map = np.nan_to_num(depth_map, nan=0.0)
+    depth_map = np.sqrt(depth_map)
+    depth_map = np.clip(depth_map, 0.0, 255.0)
+    # print(np.min(depth_map), np.max(depth_map))
+    # depth_map = np.sqrt(depth_map)
+    # depth_map = depth_map - np.mean(depth_map)
 
     return Datum(
         name=dat.name,
@@ -70,9 +79,45 @@ if __name__ == "__main__":
             print(f"Warning: Skipping {depth_map_path} - missing surface.npy or dataset_metadata.json")
             continue
         
+        # print(f"Decoding {path_np} and {md}")
+        # image_depth = image_decoder(
+        #     Datum(name="surface",
+        #     value=(str(path_np), str(md)),
+        #     decompress_fn=image_decoder,
+        #     serialize_fn=serialize_float_array)
+        # ).value
+        # # Replace NaN values with 0
+        
+        
+        # image_depth = np.nan_to_num(image_depth, nan=0.0)
+        # if np.min(image_depth) > -1 : continue
+        # print(np.min(image_depth), np.max(image_depth), np.mean(image_depth), np.std(image_depth))
+        # print(np.where(image_depth < 0)[0].sum())
+        # image_depth[image_depth < 0] = 0
+        # plt.imshow(image_depth)
+        # plt.savefig(f'./debug/negative.png')
+        # plt.close()
+        # import pdb; pdb.set_trace()
+        # log_image_depth = np.sqrt(image_depth)
+        # log_image_depth = log_image_depth - np.mean(log_image_depth)
+
+        # print(np.mean(image_depth), np.std(image_depth))
+        # print(f"Image depth range: {np.min(image_depth):.3f} to {np.max(image_depth):.3f}")
+        # fig, axs = plt.subplots(1, 4, figsize=(10, 5))
+        # axs[0].imshow(image_depth)
+        # # axs[0].colorbar()
+        # # axs[0].title(f"Surface: {path_np.parent.name}")
+        # axs[1].imshow(log_image_depth)
+        # axs[2].hist(log_image_depth.flatten(), bins=100)
+        # axs[3].hist(image_depth.flatten(), bins=100)
+
+        # plt.savefig(f'./debug/debug_surface.png')
+        # plt.close()
+        # import pdb; pdb.set_trace()
+        
         parseables.append([
             Datum(
-                name="surface",
+                name="depth",
                 value=(str(path_np), str(md)),
                 decompress_fn=image_decoder,
                 serialize_fn=serialize_float_array

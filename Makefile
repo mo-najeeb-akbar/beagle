@@ -1,4 +1,4 @@
-.PHONY: help build shell test run examples clean coverage
+.PHONY: help build shell test run examples jupyter clean coverage
 
 help:
 	@echo "Beagle Development Commands"
@@ -9,6 +9,7 @@ help:
 	@echo "  make shell      - Open bash shell in dev container"
 	@echo "  make test       - Run all tests"
 	@echo "  make coverage   - Run tests with coverage report"
+	@echo "  make jupyter    - Start Jupyter Lab (fast interactive plotting)"
 	@echo ""
 	@echo "Advanced:"
 	@echo "  make examples   - Open shell with example dependencies"
@@ -52,6 +53,12 @@ coverage:
 
 examples:
 	docker-compose run --rm examples bash
+
+jupyter:
+	@echo "Starting Jupyter Lab..."
+	@echo "Access at: http://localhost:8888"
+	@echo "Press Ctrl+C to stop"
+	docker-compose run --rm --service-ports dev jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
 
 run:
 	docker-compose run --rm dev $(CMD)

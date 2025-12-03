@@ -9,6 +9,12 @@ dist/
 build/
 *.egg
 
+sam-3d-body/
+sam3/
+bud3_w_nematodes/
+banner/
+examples/
+
 # Virtual environment
 venv/
 env/
@@ -27,6 +33,8 @@ ENV/
 htmlcov/
 .tox/
 .hypothesis/
+.pytest_cache/
+.github/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -59,7 +67,11 @@ logs/
 *.h5
 *.hdf5
 *.tfrecord
+*.so 
 *.tfrecords
+*.tif
+*.sid
+
 data/
 datasets/
 checkpoints/
@@ -72,4 +84,6 @@ temp/
 
 # Cursor
 .cursor/
+
+*.datx
 

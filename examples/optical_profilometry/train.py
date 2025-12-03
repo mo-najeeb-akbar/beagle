@@ -24,7 +24,7 @@ from data_loader import create_polymer_iterator
 
 CONFIG = {
     "learning_rate": 0.001,
-    "num_epochs": 2,  
+    "num_epochs": 50,  
     "batch_size": 32,
     "base_features": 32,
     "latent_dim": 128,
@@ -35,7 +35,7 @@ CONFIG = {
 }
 
 
-def create_train_step(wavelet_weights: tuple[float, ...] = (1.0, 8.0, 8.0, 12.0)):
+def create_train_step(wavelet_weights: tuple[float, ...] = (20.0, 8.0, 8.0, 12.0)):
     """Create JIT-compiled training step."""
     @jax.jit
     def train_step(state: TrainState, batch: dict, rng_key):
@@ -89,18 +89,13 @@ def create_viz_fn(model_apply):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python train_wavelet_vae.py /path/to/polymer_tfrecords [--compute-stats]")
+        print("Usage: python train_wavelet_vae.py /path/to/polymer_tfrecords [--compute-stats] [--fast]")
         sys.exit(1)
     
     data_dir = Path(sys.argv[1])
     
-    # Optional: just compute and display statistics
-    if '--compute-stats' in sys.argv:
-        mean, std, n_imgs = compute_polymer_stats(data_dir)
-        print(f"Dataset: {n_imgs} images")
-        print(f"Mean: {mean:.6f}")
-        print(f"Std:  {std:.6f}")
-        return
+    # Fast mode: no logging, metrics, or visualization
+    fast_mode = '--fast' in sys.argv
     
     # Setup experiment
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -137,7 +132,23 @@ def main():
         stride=CONFIG['crop_overlap'],
         shuffle=True,
         augment=True,
+        load_stats=None,
     )
+
+    # Skip validation batch in fast mode
+    if not fast_mode:
+        val_iter, val_batches = create_polymer_iterator(
+            data_dir=data_dir,
+            batch_size=CONFIG['batch_size'],
+            crop_size=CONFIG['crop_size'],
+            stride=CONFIG['crop_overlap'],
+            shuffle=False,
+            augment=False,
+            load_stats=None,
+        )
+        val_batch = next(val_iter)
+    else:
+        val_batch = None
     
     print(f"Train batches per epoch: {train_batches}")
 
@@ -145,14 +156,17 @@ def main():
     # Training step and visualization
     train_step_fn = create_train_step()
     
-    
-    # TODO: reenable validation set and visualization
-    # viz_config = VizConfig(
-    #     plot_every=5,
-    #     num_samples=4,
-    #     output_dir=f"{exp_dir}/viz"
-    # )
-    # viz_callback = create_viz_callback(create_viz_fn(model.apply), viz_config)
+    # Skip visualization in fast mode
+    if not fast_mode:
+        viz_config = VizConfig(
+            plot_every=1,
+            num_samples=10,
+            output_dir=f"{exp_dir}/viz"
+        )
+        viz_callback = create_viz_callback(create_viz_fn(model.apply), viz_config)
+    else:
+        viz_callback = None
+        print("FAST MODE: Skipping all logging, metrics, and visualization for maximum speed!")
     
     # Training data iterator function
     def data_fn():
@@ -160,7 +174,8 @@ def main():
     
     # Train
     print(f"Training for {CONFIG['num_epochs']} epochs...")
-    print("Visualization will use validation data (no augmentation)")
+    if not fast_mode:
+        print("Visualization will use validation data (no augmentation)")
     
     key, train_key = random.split(key)
     final_state, history = train_loop(
@@ -171,14 +186,17 @@ def main():
         num_batches=train_batches,
         rng_key=train_key,
         checkpoint_dir=exp_dir,
-        # viz_callback=viz_callback,
-        # viz_batch=viz_batch,  # Use validation batch for visualization
+        viz_callback=viz_callback,
+        viz_batch=val_batch,  # Use validation batch for visualization
+        fast_mode=fast_mode,
     )
     
     # Save results
-    save_metrics_history(history, exp_dir)
-    
-    print(f"Complete. Final loss: {history['train_loss'][-1]:.4f}")
+    if not fast_mode:
+        save_metrics_history(history, exp_dir)
+        print(f"Complete. Final loss: {history['train_loss'][-1]:.4f}")
+    else:
+        print(f"Complete. (Fast mode - no metrics recorded)")
     print(f"Results: {exp_dir}")
 
 

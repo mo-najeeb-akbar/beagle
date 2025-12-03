@@ -7,11 +7,9 @@ from functools import partial
 
 import jax.random as random
 
-try:
-    from tqdm import tqdm
-    HAS_TQDM = True
-except ImportError:
-    HAS_TQDM = False
+
+from tqdm import tqdm
+
 
 from beagle.training.types import TrainState, Metrics, create_metrics
 from beagle.training.metrics import average_metrics, format_metrics, accumulate_history
@@ -29,7 +27,8 @@ def train_epoch(
     data_iterator: Iterator[Any],
     num_batches: int,
     rng_key: Any,
-    log_every: int | None = None
+    log_every: int | None = None,
+    fast_mode: bool = False
 ) -> tuple[TrainState, Metrics, Any]:
     """Train for one epoch (combines pure step_fn with iteration).
     
@@ -41,11 +40,12 @@ def train_epoch(
         num_batches: Number of batches per epoch
         rng_key: JAX random key
         log_every: Log metrics every N batches (None = no batch logging)
+        fast_mode: Skip all metric collection/logging for maximum speed
         
     Returns:
         Tuple of (new_state, epoch_metrics, new_rng_key)
     """
-    batch_metrics = []
+    batch_metrics = [] if not fast_mode else None
     
     for batch_idx in range(num_batches):
         # Split RNG key
@@ -55,16 +55,17 @@ def train_epoch(
         batch = next(data_iterator)
         state, raw_metrics = train_step_fn(state, batch, step_key)
         
-        # Convert to scalar metrics
-        metrics = create_metrics(raw_metrics)
-        batch_metrics.append(metrics)
-        
-        # Optional batch-level logging
-        if log_every is not None and (batch_idx + 1) % log_every == 0:
-            print(f"  Batch {batch_idx + 1}/{num_batches} | {format_metrics(metrics)}")
+        if not fast_mode:
+            # Convert to scalar metrics
+            metrics = create_metrics(raw_metrics)
+            batch_metrics.append(metrics)
+            
+            # Optional batch-level logging
+            if log_every is not None and (batch_idx + 1) % log_every == 0:
+                print(f"  Batch {batch_idx + 1}/{num_batches} | {format_metrics(metrics)}")
     
     # Average metrics across epoch
-    epoch_metrics = average_metrics(batch_metrics)
+    epoch_metrics = average_metrics(batch_metrics) if not fast_mode else Metrics(values={})
     
     return state, epoch_metrics, rng_key
 
@@ -83,7 +84,8 @@ def train_loop(
     val_data_iterator: Iterator[Any] | None = None,
     val_num_batches: int | None = None,
     viz_callback: VizCallback | None = None,
-    viz_batch: Any | None = None
+    viz_batch: Any | None = None,
+    fast_mode: bool = False
 ) -> tuple[TrainState, dict[str, list[float]]]:
     """Complete training loop with checkpointing, logging, and visualization.
     
@@ -102,6 +104,7 @@ def train_loop(
         val_num_batches: Number of validation batches
         viz_callback: Optional visualization callback (state, batch, rng, epoch) -> None
         viz_batch: Optional cached batch for visualization (None = use last training batch)
+        fast_mode: Skip all logging, metrics, and viz for maximum speed (only saves final checkpoint)
         
     Returns:
         Tuple of (final_state, metrics_history)
@@ -109,8 +112,8 @@ def train_loop(
     history: dict[str, list[float]] = {}
     cached_viz_batch = viz_batch
     
-    # Use tqdm if available, otherwise simple range
-    epoch_iter = tqdm(range(num_epochs), desc="Training") if HAS_TQDM else range(num_epochs)
+    # Use tqdm if available (unless fast_mode), otherwise simple range
+    epoch_iter = tqdm(range(num_epochs), desc="Training")
     
     for epoch in epoch_iter:
         # Create fresh data iterator for this epoch
@@ -123,49 +126,52 @@ def train_loop(
             data_iterator=data_iter,
             num_batches=num_batches,
             rng_key=rng_key,
-            log_every=log_every
+            log_every=log_every,
+            fast_mode=fast_mode
         )
         
-        # Cache batch for visualization if not provided
-        if viz_callback is not None and cached_viz_batch is None:
-            # Get one batch for visualization
-            viz_iter = data_iterator_fn()
-            cached_viz_batch = next(viz_iter)
-        
-        # Accumulate metrics with train_ prefix
-        train_metrics_prefixed = Metrics(
-            values={f"train_{k}": v for k, v in train_metrics.values.items()}
-        )
-        history = accumulate_history(history, train_metrics_prefixed)
-        
-        # Optional validation
-        if val_step_fn is not None and val_data_iterator is not None:
-            rng_key, val_key = random.split(rng_key)
-            _, val_metrics, _ = train_epoch(
-                state=state,
-                train_step_fn=val_step_fn,
-                data_iterator=val_data_iterator,
-                num_batches=val_num_batches or 1,
-                rng_key=val_key,
-                log_every=None
+        if not fast_mode:
+            # Cache batch for visualization if not provided
+            if viz_callback is not None and cached_viz_batch is None:
+                # Get one batch for visualization
+                viz_iter = data_iterator_fn()
+                cached_viz_batch = next(viz_iter)
+            
+            # Accumulate metrics with train_ prefix
+            train_metrics_prefixed = Metrics(
+                values={f"train_{k}": v for k, v in train_metrics.values.items()}
             )
-            val_metrics_prefixed = Metrics(
-                values={f"val_{k}": v for k, v in val_metrics.values.items()}
-            )
-            history = accumulate_history(history, val_metrics_prefixed)
-        
-        # Log epoch summary
-        print(f"Epoch {epoch + 1}/{num_epochs} | {format_metrics(train_metrics)}")
-        
-        # Visualization callback
-        if viz_callback is not None and cached_viz_batch is not None:
-            rng_key, viz_key = random.split(rng_key)
-            viz_callback(state, cached_viz_batch, viz_key, epoch)
-        
-        # Checkpoint saving
-        if checkpoint_dir is not None:
-            if checkpoint_every is not None and (epoch + 1) % checkpoint_every == 0:
-                save_checkpoint(state, checkpoint_dir, step=epoch + 1)
+            history = accumulate_history(history, train_metrics_prefixed)
+            
+            # Optional validation
+            if val_step_fn is not None and val_data_iterator is not None:
+                rng_key, val_key = random.split(rng_key)
+                _, val_metrics, _ = train_epoch(
+                    state=state,
+                    train_step_fn=val_step_fn,
+                    data_iterator=val_data_iterator,
+                    num_batches=val_num_batches or 1,
+                    rng_key=val_key,
+                    log_every=None,
+                    fast_mode=False
+                )
+                val_metrics_prefixed = Metrics(
+                    values={f"val_{k}": v for k, v in val_metrics.values.items()}
+                )
+                history = accumulate_history(history, val_metrics_prefixed)
+            
+            # Log epoch summary
+            print(f"Epoch {epoch + 1}/{num_epochs} | {format_metrics(train_metrics)}")
+            
+            # Visualization callback
+            if viz_callback is not None and cached_viz_batch is not None:
+                rng_key, viz_key = random.split(rng_key)
+                viz_callback(state, cached_viz_batch, viz_key, epoch)
+            
+            # Checkpoint saving
+            if checkpoint_dir is not None:
+                if checkpoint_every is not None and (epoch + 1) % checkpoint_every == 0:
+                    save_checkpoint(state, checkpoint_dir, step=epoch + 1)
     
     # Save final checkpoint
     if checkpoint_dir is not None:

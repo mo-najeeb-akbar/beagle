@@ -87,10 +87,15 @@ FROM deps AS dev
 
 WORKDIR /code
 
+# Install OpenGL and X11 dependencies for GUI support
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy library code
 COPY beagle/ ./beagle/
 COPY tests/ ./tests/
-COPY examples/ ./examples/
 COPY pyproject.toml README.md ./
 
 # Install library in editable mode (if pyproject.toml exists)
@@ -129,7 +134,6 @@ RUN pip install --no-cache-dir \
 
 # Copy library and examples
 COPY beagle/ ./beagle/
-COPY examples/ ./examples/
 COPY pyproject.toml README.md ./
 
 # Install library

@@ -276,7 +276,10 @@ class PointCloudGenerator:
                             points: np.ndarray, 
                             colors: np.ndarray, 
                             shape: Tuple[int, int, int],
-                            step_size: int = 1) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+                            step_size: int = 1,
+                            z_smooth: float = 2.0,
+                            xy_smooth: float = 1.0,
+                            laplacian_iters: int = 0) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Extract a colored mesh from point cloud using marching cubes
         
@@ -353,23 +356,27 @@ class PointCloudGenerator:
         
         print(f"After propagation: min={color_volume.min():.3f}, max={color_volume.max():.3f}")
         
-        # Apply strong gaussian smoothing with emphasis on z-direction
-        print("Smoothing volume for continuous surface...")
+        # Apply gaussian smoothing with emphasis on z-direction to reduce banding
+        print(f"Smoothing volume (z_sigma={z_smooth}, xy_sigma={xy_smooth})...")
         from scipy.ndimage import gaussian_filter1d
         
-        # Smooth heavily in Z direction
-        volume = gaussian_filter1d(volume, sigma=2.0, axis=0)
+        # Smooth in Z direction to eliminate slice banding
+        if z_smooth > 0:
+            volume = gaussian_filter1d(volume, sigma=z_smooth, axis=0)
         # Less smoothing in X,Y to preserve detail
-        volume = gaussian_filter1d(volume, sigma=1.0, axis=1)
-        volume = gaussian_filter1d(volume, sigma=1.0, axis=2)
+        if xy_smooth > 0:
+            volume = gaussian_filter1d(volume, sigma=xy_smooth, axis=1)
+            volume = gaussian_filter1d(volume, sigma=xy_smooth, axis=2)
         
         # Smooth colors MORE GENTLY to preserve them
         print("Smoothing colors gently...")
         for c in range(3):
             # Very light smoothing - just enough to interpolate
-            color_volume[..., c] = gaussian_filter1d(color_volume[..., c], sigma=1.0, axis=0)
-            color_volume[..., c] = gaussian_filter1d(color_volume[..., c], sigma=0.5, axis=1)
-            color_volume[..., c] = gaussian_filter1d(color_volume[..., c], sigma=0.5, axis=2)
+            if z_smooth > 0:
+                color_volume[..., c] = gaussian_filter1d(color_volume[..., c], sigma=min(1.0, z_smooth/2), axis=0)
+            if xy_smooth > 0:
+                color_volume[..., c] = gaussian_filter1d(color_volume[..., c], sigma=max(0.5, xy_smooth/2), axis=1)
+                color_volume[..., c] = gaussian_filter1d(color_volume[..., c], sigma=max(0.5, xy_smooth/2), axis=2)
         
         print(f"After smoothing: min={color_volume.min():.3f}, max={color_volume.max():.3f}, mean={color_volume[color_volume > 0].mean():.3f}")
         
@@ -419,6 +426,11 @@ class PointCloudGenerator:
                 z_colors = (verts[:, 0] - verts[:, 0].min()) / (verts[:, 0].max() - verts[:, 0].min())
                 vertex_colors = np.stack([z_colors, 0.5 * np.ones_like(z_colors), 1.0 - z_colors], axis=1)
             
+            # Apply Laplacian smoothing to reduce banding artifacts
+            if laplacian_iters > 0:
+                print(f"Applying Laplacian smoothing ({laplacian_iters} iterations)...")
+                verts = self._laplacian_smooth_mesh(verts, faces, laplacian_iters)
+            
             return verts, faces, vertex_colors, normals
             
         except Exception as e:
@@ -426,6 +438,47 @@ class PointCloudGenerator:
             import traceback
             traceback.print_exc()
             return None, None, None, None
+    
+    def _laplacian_smooth_mesh(self, 
+                              vertices: np.ndarray, 
+                              faces: np.ndarray, 
+                              iterations: int = 3,
+                              lambda_smooth: float = 0.5) -> np.ndarray:
+        """
+        Apply Laplacian smoothing to mesh vertices to reduce banding
+        
+        Args:
+            vertices: Vertex positions (N, 3)
+            faces: Face indices (M, 3)
+            iterations: Number of smoothing iterations
+            lambda_smooth: Smoothing factor (0 = no change, 1 = full neighbor average)
+        
+        Returns:
+            Smoothed vertices
+        """
+        vertices = vertices.copy()
+        
+        # Build vertex adjacency list
+        from collections import defaultdict
+        neighbors = defaultdict(set)
+        for face in faces:
+            for i in range(3):
+                v1, v2 = face[i], face[(i+1) % 3]
+                neighbors[v1].add(v2)
+                neighbors[v2].add(v1)
+        
+        # Iterative Laplacian smoothing
+        for iter_idx in range(iterations):
+            new_vertices = vertices.copy()
+            for v_idx in range(len(vertices)):
+                if v_idx in neighbors and len(neighbors[v_idx]) > 0:
+                    # Average neighbor positions
+                    neighbor_pos = vertices[list(neighbors[v_idx])].mean(axis=0)
+                    # Blend with current position
+                    new_vertices[v_idx] = (1 - lambda_smooth) * vertices[v_idx] + lambda_smooth * neighbor_pos
+            vertices = new_vertices
+        
+        return vertices
     
     def save_mesh_ply(self, 
                      vertices: np.ndarray, 
@@ -670,6 +723,12 @@ def main():
                        help='Point sampling rate after extraction (1.0 = keep all points)')
     parser.add_argument('--morph-radius', type=int, default=2, 
                        help='Morphological operation radius for noise removal')
+    parser.add_argument('--z-smooth', type=float, default=2.0,
+                       help='Z-axis smoothing sigma (higher = less banding, default: 2.0)')
+    parser.add_argument('--xy-smooth', type=float, default=1.0,
+                       help='XY-axis smoothing sigma (higher = smoother surface, default: 1.0)')
+    parser.add_argument('--laplacian-smooth', type=int, default=0,
+                       help='Laplacian smoothing iterations (0 = disabled, 3-5 recommended for band removal)')
     
     args = parser.parse_args()
     
@@ -726,7 +785,11 @@ def main():
     if args.generate_mesh or args.mesh_only:
         # Generate mesh
         verts, faces, vertex_colors, normals = generator.extract_surface_mesh(
-            points, colors, shape, step_size=args.mesh_step
+            points, colors, shape, 
+            step_size=args.mesh_step,
+            z_smooth=args.z_smooth,
+            xy_smooth=args.xy_smooth,
+            laplacian_iters=args.laplacian_smooth
         )
         
         if verts is not None:

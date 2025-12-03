@@ -6,8 +6,8 @@ from utils.filter_utils import filter_dataset_names, process_dataset_names
 
 def main() -> None:
     config = {
-        "input_folder": "/data/optical_prof/Defective",
-        "output_folder": "/data/defective_pe_processed",
+        "input_folder": "/data/optical_prof/Pristine",
+        "output_folder": "/data/pristine_pe_processed",
         "datasets": ["intensity", "quality", "surface"],
         "save_dataset_metadata": True,
         "save_instrument_params": True,
@@ -16,7 +16,7 @@ def main() -> None:
     template = "date_polymer_simulant_trial_replicate_magnification_level"
     filters = {
         "date": None,
-        "polymer": "PE",
+        "polymer": None,
         "simulant": None,
         "trial": None,
         "replicate": None,

@@ -9,7 +9,8 @@ services:
     runtime: nvidia
     volumes:
       - .:/code
-      - ${MOUNT_DIR:-/tmp/beagle-data}:${MOUNT_TARGET:-/data}
+      # - ${MOUNT_DIR:-/tmp/beagle-data}:${MOUNT_TARGET:-/data}
+      - /home/jeebu/Downloads:/data
     ports:
       - "${HOST_PORT:-8888}:${CONTAINER_PORT:-8888}"
     environment:
@@ -30,7 +31,8 @@ services:
     runtime: nvidia
     volumes:
       - .:/code
-      - ${MOUNT_DIR:-/tmp/beagle-data}:${MOUNT_TARGET:-/data}
+      # - ${MOUNT_DIR:-/tmp/beagle-data}:${MOUNT_TARGET:-/data}
+      - /home/jeebu/Downloads:/data
     ports:
       - "${HOST_PORT:-8888}:${CONTAINER_PORT:-8888}"
     environment:
