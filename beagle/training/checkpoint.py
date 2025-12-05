@@ -6,10 +6,29 @@ import os
 import json
 from typing import Any
 
-import orbax.checkpoint
-from flax.training import orbax_utils
+import orbax.checkpoint as ocp
 
 from beagle.training.types import TrainState
+
+
+# Module-level checkpointer for reuse (avoids repeated initialization)
+_checkpointer: ocp.StandardCheckpointer | None = None
+
+
+def _get_checkpointer() -> ocp.StandardCheckpointer:
+    """Get or create the module-level checkpointer."""
+    global _checkpointer
+    if _checkpointer is None:
+        _checkpointer = ocp.StandardCheckpointer()
+    return _checkpointer
+
+
+def close_checkpointer() -> None:
+    """Close the checkpointer, waiting for pending saves to complete."""
+    global _checkpointer
+    if _checkpointer is not None:
+        _checkpointer.close()
+        _checkpointer = None
 
 
 def save_checkpoint(
@@ -18,44 +37,43 @@ def save_checkpoint(
     step: int | None = None
 ) -> None:
     """Save training state to disk (side effect).
-    
+
     Args:
         state: Training state to save
         checkpoint_dir: Directory to save checkpoint
         step: Optional step number for checkpoint name
     """
     os.makedirs(checkpoint_dir, exist_ok=True)
-    
+
     # Create checkpoint data
     ckpt = {
         'params': state.params,
         'opt_state': state.opt_state
     }
-    
+
     if state.batch_stats is not None:
         ckpt['batch_stats'] = state.batch_stats
-    
+
     # Generate checkpoint path
     if step is not None:
         ckpt_path = os.path.join(checkpoint_dir, f"checkpoint_{step}")
     else:
         ckpt_path = os.path.join(checkpoint_dir, "checkpoint_final")
-    
-    # Save with orbax
-    checkpointer = orbax.checkpoint.PyTreeCheckpointer()
-    save_args = orbax_utils.save_args_from_target(ckpt)
-    checkpointer.save(os.path.abspath(ckpt_path), ckpt, save_args=save_args)
+
+    # Save with orbax StandardCheckpointer (non-blocking)
+    checkpointer = _get_checkpointer()
+    checkpointer.save(os.path.abspath(ckpt_path), ckpt, force=True)
 
 
 def load_checkpoint(
     checkpoint_path: str,
 ) -> dict[str, Any]:
     """Load checkpoint and return parameters.
-    
+
     Args:
         checkpoint_path: Path to checkpoint directory
     """
-    checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+    checkpointer = _get_checkpointer()
     restored = checkpointer.restore(os.path.abspath(checkpoint_path))
     return restored
 

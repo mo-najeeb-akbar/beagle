@@ -15,6 +15,9 @@ from .crops import (
 from .iterator import (
     build_dataset_pipeline,
 )
+from .splitting import (
+    create_train_val_iterators,
+)
 from .seed import set_global_seed, set_tf_deterministic
 from .stats import (
     compute_fields_mean_std,
@@ -40,7 +43,10 @@ __all__ = [
     
     # Dataset pipeline builder
     'build_dataset_pipeline',
-    
+
+    # Dataset splitting
+    'create_train_val_iterators',
+
     # Reproducibility utilities
     'set_global_seed',
     'set_tf_deterministic',
