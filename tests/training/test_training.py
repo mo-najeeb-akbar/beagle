@@ -24,6 +24,7 @@ from beagle.training import (
     accumulate_history,
     save_checkpoint,
     load_checkpoint,
+    close_checkpointer,
     save_config,
     save_metrics_history,
     train_epoch,
@@ -170,11 +171,14 @@ def test_save_and_load_checkpoint():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save checkpoint
         save_checkpoint(state, tmpdir, step=10)
-        
+
+        # Close checkpointer to finalize non-blocking save
+        close_checkpointer()
+
         # Check directory exists
         ckpt_path = os.path.join(tmpdir, "checkpoint_10")
         assert os.path.exists(ckpt_path)
-        
+
         # Load checkpoint
         restored = load_checkpoint(ckpt_path)
         
@@ -213,11 +217,14 @@ def test_save_checkpoint_with_batch_stats():
     
     with tempfile.TemporaryDirectory() as tmpdir:
         save_checkpoint(state, tmpdir)
-        
+
+        # Close checkpointer to finalize non-blocking save
+        close_checkpointer()
+
         # Check final checkpoint exists
         ckpt_path = os.path.join(tmpdir, "checkpoint_final")
         assert os.path.exists(ckpt_path)
-        
+
         # Load and verify batch_stats
         restored = load_checkpoint(ckpt_path)
         assert 'batch_stats' in restored

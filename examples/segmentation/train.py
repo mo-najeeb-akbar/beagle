@@ -11,7 +11,7 @@ import optax
 
 from beagle.network.hrnet import MoNet
 from beagle.experiments import ExperimentConfig, ExperimentTracker, ModelRegistry
-from beagle.training import TrainState, save_checkpoint
+from beagle.training import TrainState, save_checkpoint, close_checkpointer
 from beagle.visualization import create_viz_callback, VizConfig
 
 from data_loader import create_segmentation_iterator
@@ -174,14 +174,14 @@ def main():
         for _ in range(train_batches):
             batch = next(train_iter)
             state, metrics = train_step(state, batch)
-            train_losses.append(metrics['loss'])
+            train_losses.append(float(metrics['loss']))
 
         # Validate
         val_accuracies = []
         for _ in range(val_batches):
             batch = next(val_iter)
             metrics = val_step(state, batch)
-            val_accuracies.append(metrics['val_accuracy'])
+            val_accuracies.append(float(metrics['val_accuracy']))
 
         # Log metrics
         metrics = {
@@ -192,7 +192,8 @@ def main():
         print(f"Epoch {epoch + 1}: train={metrics['train_loss']:.4f}, val={metrics['val_accuracy']:.4f}")
 
         # Save best checkpoint
-        if metrics['val_accuracy'] < best_val_accuracy:
+        if metrics['val_accuracy'] > best_val_accuracy:
+            print(f"New best validation accuracy: {metrics['val_accuracy']:.4f}")
             best_val_accuracy = metrics['val_accuracy']
             checkpoint_dir = run.output_dir / 'checkpoints' / 'best'
             save_checkpoint(state, str(checkpoint_dir))
@@ -201,5 +202,20 @@ def main():
     run.finish(status='completed')
     print(run.summary())
 
+    # 7. Register model
+    registry = ModelRegistry(registry_dir='/data/models')
+    registry.register_model(
+        model_name=config.name,
+        experiment_id=run.experiment_id,
+        config_hash=config.hash(),
+        checkpoint_path=run.output_dir / 'checkpoints' / 'best',
+        metrics={'best_val_accuracy': best_val_accuracy},
+        timestamp=run.metadata.timestamp
+    )
+
+
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    finally:
+        close_checkpointer()
