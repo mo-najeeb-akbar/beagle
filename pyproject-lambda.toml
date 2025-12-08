@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beagle"
+version = "0.1.0"
+description = "Dataset utilities for TFRecord creation and loading"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Beagle Contributors"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+
+# Minimal dependencies for Lambda Labs
+# Lambda Labs already has: torch, tensorflow, jax, numpy, keras
+dependencies = [
+    "flax>=0.8.0",
+    "typing_extensions>=4.0.0",
+]
+
+[project.optional-dependencies]
+# Optional features (install only what you need)
+augmentations = [
+    "albumentations>=1.3.0",
+]
+visualization = [
+    "matplotlib>=3.8.0",
+]
+progress = [
+    "tqdm>=4.60.0",
+]
+all = [
+    "albumentations>=1.3.0",
+    "matplotlib>=3.8.0",
+    "tqdm>=4.60.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/beagle"
+Repository = "https://github.com/yourusername/beagle"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["beagle*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=beagle --cov-report=term-missing"
