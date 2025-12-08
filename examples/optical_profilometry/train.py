@@ -125,7 +125,7 @@ def main():
     
     # Load data with train/val split
     print("Loading polymer dataset with train/val split...")
-    train_iter, train_batches = create_polymer_iterator(
+    train_iter, val_iter, train_batches, val_batches = create_polymer_iterator(
         data_dir=data_dir,
         batch_size=CONFIG['batch_size'],
         crop_size=CONFIG['crop_size'],
@@ -133,24 +133,18 @@ def main():
         shuffle=True,
         augment=True,
         load_stats=None,
+        val_fraction=CONFIG['val_split'],
+        seed=CONFIG['split_seed'],
     )
 
-    # Skip validation batch in fast mode
+    # Get validation batch for visualization (unless in fast mode)
     if not fast_mode:
-        val_iter, val_batches = create_polymer_iterator(
-            data_dir=data_dir,
-            batch_size=CONFIG['batch_size'],
-            crop_size=CONFIG['crop_size'],
-            stride=CONFIG['crop_overlap'],
-            shuffle=False,
-            augment=False,
-            load_stats=None,
-        )
         val_batch = next(val_iter)
     else:
         val_batch = None
-    
+
     print(f"Train batches per epoch: {train_batches}")
+    print(f"Val batches per epoch: {val_batches}")
 
     
     # Training step and visualization
