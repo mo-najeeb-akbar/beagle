@@ -30,10 +30,14 @@ pip install beagle
 ```
 
 This installs only:
+- `numpy>=1.24.0,<2.0` (pinned to 1.x for Lambda Labs compatibility)
 - `flax>=0.8.0` (JAX neural network library)
 - `typing_extensions>=4.0.0` (lightweight type hints)
+- `tqdm>=4.60.0` (progress bars)
 
-Total install size: **~5-10 MB** (vs ~2 GB with full TensorFlow/JAX)
+Total install size: **~10-15 MB** (vs ~2 GB with full TensorFlow/JAX)
+
+**Important:** NumPy is pinned to 1.x because Lambda Labs' pre-compiled TensorFlow and JAX require it.
 
 ## Optional Features
 
@@ -45,9 +49,6 @@ pip install beagle[augmentations]
 
 # For visualization/plotting
 pip install beagle[visualization]
-
-# For progress bars
-pip install beagle[progress]
 
 # For everything
 pip install beagle[all]
