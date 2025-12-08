@@ -25,6 +25,10 @@ from .stats import (
     save_field_stats,
     load_field_stats,
 )
+from .disk_loader import (
+    load_fields_from_disk,
+    create_disk_iterator,
+)
 
 __all__ = [
     # Core types
@@ -67,4 +71,8 @@ __all__ = [
     'serialize_float_or_int',
     'serialize_image',
     'serialize_string',
+
+    # Direct disk loading (skip TFRecords)
+    'load_fields_from_disk',
+    'create_disk_iterator',
 ]
