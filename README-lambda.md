@@ -19,8 +19,11 @@ Your Lambda Labs instance already has:
 git clone <your-repo-url>
 cd beagle
 
+# Upgrade pip (recommended)
+pip install --upgrade pip
+
 # Install with minimal dependencies (just flax + typing_extensions)
-pip install -e . --config-settings editable_mode=strict
+pip install -e .
 
 # Or install from PyPI (when published)
 pip install beagle

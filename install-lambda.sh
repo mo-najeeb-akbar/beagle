@@ -18,9 +18,13 @@ fi
 echo "Using minimal Lambda Labs configuration..."
 cp pyproject-lambda.toml pyproject.toml
 
+# Upgrade pip first (optional but recommended)
+echo "Upgrading pip..."
+pip install --upgrade pip setuptools wheel
+
 # Install in editable mode
 echo "Installing beagle with minimal dependencies..."
-pip install -e . --config-settings editable_mode=strict
+pip install -e .
 
 echo ""
 echo "✓ Installation complete!"
