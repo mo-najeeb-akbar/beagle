@@ -15,6 +15,7 @@ def load_fields_from_disk(
     file_list: list[dict[str, str]],
     field_loaders: dict[str, Callable[[str], np.ndarray]],
     field_transforms: dict[str, Callable[[np.ndarray], np.ndarray]] | None = None,
+    sample_transform: Callable[[dict[str, np.ndarray]], dict[str, np.ndarray]] | None = None,
 ) -> dict[str, np.ndarray]:
     """Load multiple fields from disk into a dictionary of numpy arrays.
 
@@ -28,6 +29,9 @@ def load_fields_from_disk(
             ]
         field_loaders: Dict mapping field name -> load function
         field_transforms: Optional dict mapping field name -> transform function
+            (applied after sample_transform)
+        sample_transform: Optional function that transforms entire sample dict
+            (applied before field_transforms, useful for paired augmentations like Albumentations)
 
     Returns:
         Dict mapping field name -> numpy array [N, ...]
@@ -50,6 +54,37 @@ def load_fields_from_disk(
         ...     }
         ... )
         >>> # data = {'image': [N, H, W, 1], 'mask': [N, H, W, 1]}
+
+    Example (with Albumentations):
+        >>> import albumentations as A
+        >>> 
+        >>> albu_transform = A.Compose([
+        ...     A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.1, rotate_limit=45, p=0.7),
+        ...     A.ElasticTransform(p=0.3),
+        ... ])
+        >>> 
+        >>> def apply_albu(sample):
+        ...     # Remove channel dimension for albumentations
+        ...     img = sample['image'][:, :, 0] if sample['image'].ndim == 3 else sample['image']
+        ...     msk = sample['mask'][:, :, 0] if sample['mask'].ndim == 3 else sample['mask']
+        ...     
+        ...     augmented = albu_transform(image=img, mask=msk)
+        ...     
+        ...     # Add channel dimension back
+        ...     return {
+        ...         'image': augmented['image'][:, :, np.newaxis],
+        ...         'mask': augmented['mask'][:, :, np.newaxis],
+        ...     }
+        >>> 
+        >>> data = load_fields_from_disk(
+        ...     file_list=file_list,
+        ...     field_loaders={'image': load_image, 'mask': load_mask},
+        ...     sample_transform=apply_albu,  # Apply Albumentations
+        ...     field_transforms={
+        ...         'image': lambda x: (x - 127.5) / 127.5,  # Normalize after augmentation
+        ...         'mask': lambda x: x.astype(np.float32),
+        ...     }
+        ... )
 
     Example (classification):
         >>> file_list = [
@@ -84,18 +119,23 @@ def load_fields_from_disk(
             raise ValueError(f"Inconsistent fields: expected {field_names}, got {list(sample_dict.keys())}")
 
         # Load each field
+        sample_arrays = {}
         for field_name in field_names:
             path = sample_dict[field_name]
             load_fn = field_loaders[field_name]
-            transform_fn = field_transforms.get(field_name)
-
-            # Load
             arr = load_fn(path)
+            sample_arrays[field_name] = arr
 
-            # Transform
+        # Apply sample-level transform (e.g., Albumentations)
+        if sample_transform is not None:
+            sample_arrays = sample_transform(sample_arrays)
+
+        # Apply field-level transforms (e.g., normalization)
+        for field_name in field_names:
+            arr = sample_arrays[field_name]
+            transform_fn = field_transforms.get(field_name)
             if transform_fn is not None:
                 arr = transform_fn(arr)
-
             field_data[field_name].append(arr)
 
     # Stack into arrays
