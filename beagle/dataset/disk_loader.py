@@ -6,9 +6,59 @@ Simple, explicit approach - you provide aligned file paths, we load them into nu
 from __future__ import annotations
 
 from typing import Iterator, Callable
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 import jax.numpy as jnp
 import tensorflow as tf
+
+
+def _process_single_sample(
+    sample_dict: dict[str, str],
+    field_names: list[str],
+    field_loaders: dict[str, Callable[[str], np.ndarray]],
+    field_transforms: dict[str, Callable[[np.ndarray], np.ndarray]],
+    sample_transform: Callable[[dict[str, np.ndarray]], dict[str, np.ndarray]] | None,
+) -> dict[str, np.ndarray]:
+    """Process a single sample (pure function for parallel execution).
+    
+    Args:
+        sample_dict: Dict mapping field name -> file path
+        field_names: List of expected field names
+        field_loaders: Dict mapping field name -> load function
+        field_transforms: Dict mapping field name -> transform function
+        sample_transform: Optional function for paired transforms
+        
+    Returns:
+        Dict mapping field name -> transformed array
+    """
+    # Verify all fields are present
+    if set(sample_dict.keys()) != set(field_names):
+        raise ValueError(
+            f"Inconsistent fields: expected {field_names}, got {list(sample_dict.keys())}"
+        )
+
+    # Load each field
+    sample_arrays = {}
+    for field_name in field_names:
+        path = sample_dict[field_name]
+        load_fn = field_loaders[field_name]
+        arr = load_fn(path)
+        sample_arrays[field_name] = arr
+
+    # Apply sample-level transform (e.g., Albumentations)
+    if sample_transform is not None:
+        sample_arrays = sample_transform(sample_arrays)
+
+    # Apply field-level transforms (e.g., normalization)
+    result = {}
+    for field_name in field_names:
+        arr = sample_arrays[field_name]
+        transform_fn = field_transforms.get(field_name)
+        if transform_fn is not None:
+            arr = transform_fn(arr)
+        result[field_name] = arr
+
+    return result
 
 
 def load_fields_from_disk(
@@ -16,6 +66,7 @@ def load_fields_from_disk(
     field_loaders: dict[str, Callable[[str], np.ndarray]],
     field_transforms: dict[str, Callable[[np.ndarray], np.ndarray]] | None = None,
     sample_transform: Callable[[dict[str, np.ndarray]], dict[str, np.ndarray]] | None = None,
+    num_workers: int = 1,
 ) -> dict[str, np.ndarray]:
     """Load multiple fields from disk into a dictionary of numpy arrays.
 
@@ -32,6 +83,8 @@ def load_fields_from_disk(
             (applied after sample_transform)
         sample_transform: Optional function that transforms entire sample dict
             (applied before field_transforms, useful for paired augmentations like Albumentations)
+        num_workers: Number of parallel workers for loading (default: 1 = sequential)
+            Use > 1 for faster loading on multi-core systems
 
     Returns:
         Dict mapping field name -> numpy array [N, ...]
@@ -106,37 +159,46 @@ def load_fields_from_disk(
     # Get all field names from first entry
     field_names = list(file_list[0].keys())
 
-    # Initialize storage for each field
-    field_data = {name: [] for name in field_names}
-
     # Load all samples
     n_samples = len(file_list)
-    print(f"Loading {n_samples} samples...")
+    print(f"Loading {n_samples} samples (workers={num_workers})...")
 
-    for sample_dict in file_list:
-        # Verify all fields are present
-        if set(sample_dict.keys()) != set(field_names):
-            raise ValueError(f"Inconsistent fields: expected {field_names}, got {list(sample_dict.keys())}")
+    # Sequential execution (simpler, less overhead)
+    if num_workers == 1:
+        processed_samples = [
+            _process_single_sample(
+                sample_dict=sample_dict,
+                field_names=field_names,
+                field_loaders=field_loaders,
+                field_transforms=field_transforms,
+                sample_transform=sample_transform,
+            )
+            for sample_dict in file_list
+        ]
+    # Parallel execution
+    else:
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            # Submit all tasks
+            futures = [
+                executor.submit(
+                    _process_single_sample,
+                    sample_dict=sample_dict,
+                    field_names=field_names,
+                    field_loaders=field_loaders,
+                    field_transforms=field_transforms,
+                    sample_transform=sample_transform,
+                )
+                for sample_dict in file_list
+            ]
+            
+            # Collect results in order
+            processed_samples = [future.result() for future in futures]
 
-        # Load each field
-        sample_arrays = {}
+    # Organize by field and stack
+    field_data = {name: [] for name in field_names}
+    for sample_arrays in processed_samples:
         for field_name in field_names:
-            path = sample_dict[field_name]
-            load_fn = field_loaders[field_name]
-            arr = load_fn(path)
-            sample_arrays[field_name] = arr
-
-        # Apply sample-level transform (e.g., Albumentations)
-        if sample_transform is not None:
-            sample_arrays = sample_transform(sample_arrays)
-
-        # Apply field-level transforms (e.g., normalization)
-        for field_name in field_names:
-            arr = sample_arrays[field_name]
-            transform_fn = field_transforms.get(field_name)
-            if transform_fn is not None:
-                arr = transform_fn(arr)
-            field_data[field_name].append(arr)
+            field_data[field_name].append(sample_arrays[field_name])
 
     # Stack into arrays
     result = {}
