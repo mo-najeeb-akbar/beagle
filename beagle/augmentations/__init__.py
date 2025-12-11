@@ -24,6 +24,9 @@ from .compose import (
     random_rotate_90,
     random_brightness,
     random_contrast,
+    random_gaussian_noise,
+    random_pixel_dropout,
+    random_gaussian_blur,
     clip_values,
 )
 
@@ -41,6 +44,9 @@ __all__ = [
     "random_rotate_90",
     "random_brightness",
     "random_contrast",
+    "random_gaussian_noise",
+    "random_pixel_dropout",
+    "random_gaussian_blur",
     "clip_values",
     # Reproducibility
     "set_global_seed",

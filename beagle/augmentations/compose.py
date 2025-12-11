@@ -257,15 +257,116 @@ def random_rotate_90(
     return apply_same_transform_to_all(fields, transform)
 
 
+def random_gaussian_noise(
+    stddev: float,
+    field: str = 'image',
+) -> AugmentFn:
+    """
+    Add random Gaussian noise to images (pure).
+    
+    Args:
+        stddev: Standard deviation of noise (e.g., 0.1 for [-1, 1] images)
+        field: Field name to apply to (default: 'image')
+    
+    Returns:
+        Augmentation function
+    """
+    def add_noise(x: tf.Tensor) -> tf.Tensor:
+        noise = tf.random.normal(tf.shape(x), mean=0.0, stddev=stddev)
+        return x + noise
+    
+    return apply_to_field(field, add_noise)
+
+
+def random_pixel_dropout(
+    drop_prob: float,
+    field: str = 'image',
+) -> AugmentFn:
+    """
+    Randomly drop (zero out) pixels (pure).
+    
+    Args:
+        drop_prob: Probability of dropping each pixel (e.g., 0.1 for 10% dropout)
+        field: Field name to apply to (default: 'image')
+    
+    Returns:
+        Augmentation function
+    """
+    def dropout_pixels(x: tf.Tensor) -> tf.Tensor:
+        mask = tf.random.uniform(tf.shape(x)) > drop_prob
+        return x * tf.cast(mask, x.dtype)
+    
+    return apply_to_field(field, dropout_pixels)
+
+
+def random_gaussian_blur(
+    kernel_size: int = 5,
+    sigma_range: tuple[float, float] = (0.1, 2.0),
+    field: str = 'image',
+) -> AugmentFn:
+    """
+    Apply random Gaussian blur (pure).
+    
+    Args:
+        kernel_size: Size of blur kernel (must be odd, e.g., 3, 5, 7)
+        sigma_range: Range for random sigma (e.g., (0.1, 2.0))
+        field: Field name to apply to (default: 'image')
+    
+    Returns:
+        Augmentation function
+    """
+    def apply_blur(x: tf.Tensor) -> tf.Tensor:
+        sigma = tf.random.uniform([], sigma_range[0], sigma_range[1])
+        
+        # Create Gaussian kernel
+        kernel_range = tf.range(kernel_size, dtype=tf.float32)
+        kernel_range = kernel_range - (kernel_size - 1) / 2.0
+        
+        # 1D Gaussian
+        gauss = tf.exp(-0.5 * tf.square(kernel_range) / tf.square(sigma))
+        gauss = gauss / tf.reduce_sum(gauss)
+        
+        # 2D kernel via outer product
+        kernel = tf.tensordot(gauss, gauss, axes=0)
+        kernel = kernel[:, :, tf.newaxis, tf.newaxis]
+        
+        # Apply per channel
+        channels = tf.shape(x)[-1]
+        kernel = tf.tile(kernel, [1, 1, channels, 1])
+        
+        # Add batch dimension if needed
+        x_batched = x[tf.newaxis, :, :, :] if len(x.shape) == 3 else x
+        
+        # Apply depthwise convolution
+        blurred = tf.nn.depthwise_conv2d(
+            x_batched, kernel, strides=[1, 1, 1, 1], padding='SAME'
+        )
+        
+        # Remove batch dimension if it was added
+        return blurred[0] if len(x.shape) == 3 else blurred
+    
+    return apply_to_field(field, apply_blur)
+
+
 def random_brightness(
     max_delta: float,
     field: str = 'image',
 ) -> AugmentFn:
-    """Random brightness adjustment (pure)."""
-    return apply_to_field(
-        field,
-        lambda x: tf.image.random_brightness(x, max_delta),
-    )
+    """
+    Random brightness adjustment for [-1, 1] normalized images (pure).
+    
+    Args:
+        max_delta: Maximum change in brightness (e.g., 0.2 for ±20% change)
+        field: Field name to apply to (default: 'image')
+    
+    Returns:
+        Augmentation function
+    """
+    def adjust_brightness(x: tf.Tensor) -> tf.Tensor:
+        delta = tf.random.uniform([], -max_delta, max_delta)
+        return x + delta
+    
+    return apply_to_field(field, adjust_brightness)
 
 
 def random_contrast(
@@ -273,11 +374,23 @@ def random_contrast(
     upper: float,
     field: str = 'image',
 ) -> AugmentFn:
-    """Random contrast adjustment (pure)."""
-    return apply_to_field(
-        field,
-        lambda x: tf.image.random_contrast(x, lower, upper),
-    )
+    """
+    Random contrast adjustment for [-1, 1] normalized images (pure).
+    
+    Args:
+        lower: Lower bound for contrast factor (e.g., 0.8)
+        upper: Upper bound for contrast factor (e.g., 1.2)
+        field: Field name to apply to (default: 'image')
+    
+    Returns:
+        Augmentation function
+    """
+    def adjust_contrast(x: tf.Tensor) -> tf.Tensor:
+        factor = tf.random.uniform([], lower, upper)
+        mean = tf.reduce_mean(x)
+        return (x - mean) * factor + mean
+    
+    return apply_to_field(field, adjust_contrast)
 
 
 def clip_values(
