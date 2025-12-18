@@ -16,10 +16,11 @@ def save_checkpoint(
     checkpoint_dir: str,
     step: int | None = None
 ) -> None:
-    """Save training state to disk (side effect, BLOCKING).
+    """Save training state to disk (side effect, FULLY SYNCHRONOUS).
 
-    This function performs synchronous (blocking) saves to avoid
-    race conditions and permission errors from async operations.
+    Uses orbax.checkpoint.Checkpointer with StandardCheckpointHandler for
+    synchronous (blocking) saves. This completely avoids race conditions,
+    permission errors, and threading issues from async operations.
 
     Args:
         state: Training state to save
@@ -43,17 +44,14 @@ def save_checkpoint(
     else:
         ckpt_path = os.path.join(checkpoint_dir, "checkpoint_final")
 
-    # Create a new synchronous checkpointer for each save
-    # This avoids threading issues and ensures saves complete immediately
-    checkpointer = ocp.StandardCheckpointer()
+    # Use Checkpointer with StandardCheckpointHandler for SYNCHRONOUS saves
+    # This blocks until the save completes (no background threads/async)
+    checkpointer = ocp.Checkpointer(ocp.StandardCheckpointHandler())
     
-    # Save and wait for completion (blocking)
+    # Save synchronously (blocks until complete)
     checkpointer.save(os.path.abspath(ckpt_path), ckpt, force=True)
     
-    # Wait for all pending operations to complete
-    checkpointer.wait_until_finished()
-    
-    # Close to release resources immediately
+    # Close to release resources
     checkpointer.close()
 
 
@@ -65,8 +63,8 @@ def load_checkpoint(
     Args:
         checkpoint_path: Path to checkpoint directory
     """
-    # Create a fresh checkpointer for loading (no shared state)
-    checkpointer = ocp.StandardCheckpointer()
+    # Use synchronous Checkpointer (no shared state)
+    checkpointer = ocp.Checkpointer(ocp.StandardCheckpointHandler())
     restored = checkpointer.restore(os.path.abspath(checkpoint_path))
     checkpointer.close()
     return restored
