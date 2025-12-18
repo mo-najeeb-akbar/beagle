@@ -201,8 +201,31 @@ def run_sweep(
             'metrics': metrics,
             'status': status
         })
+        
+        # Clean up between jobs to avoid state leakage
+        _cleanup_between_jobs()
 
     return results
+
+
+def _cleanup_between_jobs() -> None:
+    """Clean up caches and state between training jobs.
+    
+    Prevents corruption when running multiple jobs back-to-back.
+    """
+    try:
+        import gc
+        import jax
+        
+        # Clear JAX compilation cache
+        jax.clear_caches()
+        
+        # Force garbage collection
+        gc.collect()
+        
+    except Exception as e:
+        # Don't fail the sweep if cleanup has issues
+        print(f"⚠ Cleanup warning: {e}")
 
 
 def get_best_config(
