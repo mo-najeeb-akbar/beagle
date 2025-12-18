@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 import orbax.checkpoint as ocp
+from flax.training import orbax_utils
 
 from beagle.training.types import TrainState
 
@@ -16,11 +17,11 @@ def save_checkpoint(
     checkpoint_dir: str,
     step: int | None = None
 ) -> None:
-    """Save training state to disk (side effect, FULLY SYNCHRONOUS).
+    """Save training state to disk (side effect, SYNCHRONOUS).
 
-    Uses orbax.checkpoint.Checkpointer with StandardCheckpointHandler for
-    synchronous (blocking) saves. This completely avoids race conditions,
-    permission errors, and threading issues from async operations.
+    Uses orbax.checkpoint.Checkpointer with PyTreeCheckpointHandler
+    as recommended in the official Flax migration guide.
+    This is synchronous (blocking) - no async operations.
 
     Args:
         state: Training state to save
@@ -44,15 +45,19 @@ def save_checkpoint(
     else:
         ckpt_path = os.path.join(checkpoint_dir, "checkpoint_final")
 
-    # Use Checkpointer with StandardCheckpointHandler for SYNCHRONOUS saves
-    # This blocks until the save completes (no background threads/async)
-    checkpointer = ocp.Checkpointer(ocp.StandardCheckpointHandler())
+    # Create synchronous checkpointer (Flax recommended approach)
+    checkpointer = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
+    
+    # Generate save_args from target (handles sharding/multi-host correctly)
+    save_args = orbax_utils.save_args_from_target(ckpt)
     
     # Save synchronously (blocks until complete)
-    checkpointer.save(os.path.abspath(ckpt_path), ckpt, force=True)
-    
-    # Close to release resources
-    checkpointer.close()
+    checkpointer.save(
+        os.path.abspath(ckpt_path),
+        ckpt,
+        save_args=save_args,
+        force=True,
+    )
 
 
 def load_checkpoint(
@@ -63,10 +68,12 @@ def load_checkpoint(
     Args:
         checkpoint_path: Path to checkpoint directory
     """
-    # Use synchronous Checkpointer (no shared state)
-    checkpointer = ocp.Checkpointer(ocp.StandardCheckpointHandler())
-    restored = checkpointer.restore(os.path.abspath(checkpoint_path))
-    checkpointer.close()
+    # Create synchronous checkpointer
+    checkpointer = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
+    
+    # Restore without target (item=None restores everything)
+    restored = checkpointer.restore(os.path.abspath(checkpoint_path), item=None)
+    
     return restored
 
 

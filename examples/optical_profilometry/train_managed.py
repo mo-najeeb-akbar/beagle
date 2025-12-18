@@ -83,6 +83,7 @@ def train_model(config: ExperimentConfig, data_dir: Path) -> dict[str, float]:
     # Training loop
     print(f"Training for {config.training.num_epochs} epochs...\n")
     best_val_loss = float('inf')
+    best_state = None  # Keep best checkpoint in memory
 
     for epoch in range(config.training.num_epochs):
         state, metrics, key = run_epoch(
@@ -94,12 +95,18 @@ def train_model(config: ExperimentConfig, data_dir: Path) -> dict[str, float]:
         print(f"Epoch {epoch + 1:02d}/{config.training.num_epochs}: "
               f"train={metrics['train_loss']:.4f}, val={metrics['val_loss']:.4f}")
 
-        # Save best checkpoint
+        # Keep best checkpoint in memory (no disk I/O during training)
         if metrics['val_loss'] < best_val_loss:
             best_val_loss = metrics['val_loss']
-            checkpoint_dir = run.output_dir / 'checkpoints' / 'best'
-            save_checkpoint(state, str(checkpoint_dir))
-            print(f"  → Saved best checkpoint")
+            best_state = state  # Just store reference (cheap)
+            print(f"  → New best model (val_loss={best_val_loss:.4f})")
+    
+    # Save best checkpoint once at the end
+    if best_state is not None:
+        print(f"\nSaving best checkpoint (val_loss={best_val_loss:.4f})...")
+        checkpoint_dir = run.output_dir / 'checkpoints' / 'best'
+        save_checkpoint(best_state, str(checkpoint_dir))
+        print(f"  ✓ Saved to {checkpoint_dir}")
 
     # Finish experiment
     final_metrics = {
