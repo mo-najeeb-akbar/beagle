@@ -11,32 +11,15 @@ import orbax.checkpoint as ocp
 from beagle.training.types import TrainState
 
 
-# Module-level checkpointer for reuse (avoids repeated initialization)
-_checkpointer: ocp.StandardCheckpointer | None = None
-
-
-def _get_checkpointer() -> ocp.StandardCheckpointer:
-    """Get or create the module-level checkpointer."""
-    global _checkpointer
-    if _checkpointer is None:
-        _checkpointer = ocp.StandardCheckpointer()
-    return _checkpointer
-
-
-def close_checkpointer() -> None:
-    """Close the checkpointer, waiting for pending saves to complete."""
-    global _checkpointer
-    if _checkpointer is not None:
-        _checkpointer.close()
-        _checkpointer = None
-
-
 def save_checkpoint(
     state: TrainState,
     checkpoint_dir: str,
     step: int | None = None
 ) -> None:
-    """Save training state to disk (side effect).
+    """Save training state to disk (side effect, BLOCKING).
+
+    This function performs synchronous (blocking) saves to avoid
+    race conditions and permission errors from async operations.
 
     Args:
         state: Training state to save
@@ -60,9 +43,18 @@ def save_checkpoint(
     else:
         ckpt_path = os.path.join(checkpoint_dir, "checkpoint_final")
 
-    # Save with orbax StandardCheckpointer (non-blocking)
-    checkpointer = _get_checkpointer()
+    # Create a new synchronous checkpointer for each save
+    # This avoids threading issues and ensures saves complete immediately
+    checkpointer = ocp.StandardCheckpointer()
+    
+    # Save and wait for completion (blocking)
     checkpointer.save(os.path.abspath(ckpt_path), ckpt, force=True)
+    
+    # Wait for all pending operations to complete
+    checkpointer.wait_until_finished()
+    
+    # Close to release resources immediately
+    checkpointer.close()
 
 
 def load_checkpoint(
@@ -73,8 +65,10 @@ def load_checkpoint(
     Args:
         checkpoint_path: Path to checkpoint directory
     """
-    checkpointer = _get_checkpointer()
+    # Create a fresh checkpointer for loading (no shared state)
+    checkpointer = ocp.StandardCheckpointer()
     restored = checkpointer.restore(os.path.abspath(checkpoint_path))
+    checkpointer.close()
     return restored
 
 

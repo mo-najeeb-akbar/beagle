@@ -17,7 +17,7 @@ import jax.numpy as jnp
 import jax.random as random
 import optax
 
-from beagle.training import TrainState, save_checkpoint, close_checkpointer
+from beagle.training import TrainState, save_checkpoint
 from beagle.experiments import (
     ExperimentConfig,
     ExperimentTracker,
@@ -211,7 +211,4 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    finally:
-        close_checkpointer()
+    main()
