@@ -7,9 +7,24 @@ from __future__ import annotations
 
 from typing import Iterator, Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from functools import partial
 import numpy as np
+import jax
 import jax.numpy as jnp
 import tensorflow as tf
+
+
+def to_jax(tensor_dict: dict, dtype: jnp.dtype = jnp.float32) -> dict:
+    """Convert a dictionary of tensors to JAX arrays.
+
+    Handles TensorFlow tensors by calling .numpy() first.
+    """
+    def convert(x):
+        # Handle TensorFlow tensors
+        if hasattr(x, 'numpy'):
+            x = x.numpy()
+        return jnp.array(x, dtype=dtype)
+    return jax.tree.map(convert, tensor_dict)
 
 
 def _process_single_sample(
@@ -279,8 +294,5 @@ def create_disk_iterator(
     # Prefetch for performance
     dataset = dataset.prefetch(tf.data.AUTOTUNE)
 
-    # Convert to iterator and yield JAX arrays
-    for batch in dataset:
-        # Convert TensorFlow tensors to JAX arrays
-        jax_batch = {k: jnp.array(v.numpy()) for k, v in batch.items()}
-        yield jax_batch
+    # Convert to JAX iterator
+    return map(partial(to_jax, dtype=jnp.float32), dataset)

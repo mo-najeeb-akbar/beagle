@@ -13,7 +13,7 @@ class CompactVAE(nn.Module):
     @nn.compact
     def __call__(
         self, x: jnp.ndarray, rng: jax.random.PRNGKey, training: bool = True
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> dict[str, jnp.ndarray]:
         """Encode categorical genes to latent space and decode.
 
         Args:
@@ -22,10 +22,11 @@ class CompactVAE(nn.Module):
             training: Whether in training mode
 
         Returns:
-            logits: Reconstruction logits [batch, num_genes, num_categories]
-            mu: Latent mean [batch, latent_dim]
-            logvar: Latent log variance [batch, latent_dim]
-            z: Sampled latent (or mu if not training) [batch, latent_dim]
+            Dict with keys:
+                - 'logits': Reconstruction logits [batch, num_genes, num_categories]
+                - 'mu': Latent mean [batch, latent_dim]
+                - 'logvar': Latent log variance [batch, latent_dim]
+                - 'latent': Sampled latent (or mu if not training) [batch, latent_dim]
         """
         batch_size, num_genes = x.shape
 
@@ -62,5 +63,10 @@ class CompactVAE(nn.Module):
         logits = nn.Dense(num_genes * self.num_categories)(h)
         logits = logits.reshape(batch_size, num_genes, self.num_categories)
 
-        return logits, mu, logvar, z
+        return {
+            'logits': logits,
+            'mu': mu,
+            'logvar': logvar,
+            'latent': z
+        }
     

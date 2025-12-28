@@ -16,7 +16,7 @@ class DenseEncoder(nn.Module):
     @nn.compact
     def __call__(
         self, x: jnp.ndarray, rng: jax.random.PRNGKey, training: bool = True
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> dict[str, jnp.ndarray]:
         """Encode categorical input to normalized latent vector with reconstruction.
 
         Args:
@@ -25,9 +25,10 @@ class DenseEncoder(nn.Module):
             training: Whether in training mode
 
         Returns:
-            h: Normalized latent vector [batch, project_dim]
-            recon_logits: Reconstruction logits [batch, num_recon, num_categories]
-            targets: Original values at sampled positions [batch, num_recon]
+            Dict with keys:
+                - 'embedding': Normalized latent vector [batch, project_dim]
+                - 'reconstruction_logits': Reconstruction logits [batch, num_recon, num_categories]
+                - 'targets': Original values at sampled positions [batch, num_recon]
         """
         embedded = nn.Embed(
             num_embeddings=self.num_categories, features=self.embed_dim
@@ -72,7 +73,11 @@ class DenseEncoder(nn.Module):
 
         recon_logits = nn.Dense(self.num_categories)(decoded)
 
-        return h, recon_logits, x[:, recon_indices]
+        return {
+            'embedding': h,
+            'reconstruction_logits': recon_logits,
+            'targets': x[:, recon_indices]
+        }
 
     def get_gene_importance_scores(self, params: dict) -> jnp.ndarray:
         """Get learned importance scores for each gene.

@@ -170,7 +170,7 @@ class CategoricalVAE(nn.Module):
 
     def __call__(
         self, x: jnp.ndarray, key: jax.random.PRNGKey, training: bool = True
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> dict[str, jnp.ndarray]:
         """Forward pass through VAE.
 
         Args:
@@ -179,10 +179,11 @@ class CategoricalVAE(nn.Module):
             training: Whether in training mode
 
         Returns:
-            logits: Unnormalized log probabilities [batch_size, num_genes, num_categories]
-            mu: Latent mean [batch_size, latent_dim]
-            log_var: Latent log variance [batch_size, latent_dim]
-            z_normalized: Normalized latent vector [batch_size, latent_dim]
+            Dict with keys:
+                - 'logits': Unnormalized log probabilities [batch_size, num_genes, num_categories]
+                - 'mu': Latent mean [batch_size, latent_dim]
+                - 'log_var': Latent log variance [batch_size, latent_dim]
+                - 'latent_normalized': Normalized latent vector [batch_size, latent_dim]
         """
         pos_indices = jnp.arange(x.shape[1])
         pos_embed = self.embedding(pos_indices)
@@ -193,5 +194,10 @@ class CategoricalVAE(nn.Module):
 
         logits = self.decoder(mu, pos_embed, training)
 
-        return logits, mu, log_var, z_normalized
+        return {
+            'logits': logits,
+            'mu': mu,
+            'log_var': log_var,
+            'latent_normalized': z_normalized
+        }
     

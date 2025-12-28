@@ -125,16 +125,30 @@ class VAE(nn.Module):
 
     def __call__(
         self, x: jnp.ndarray, key: jax.random.PRNGKey, training: bool = True
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> dict[str, jnp.ndarray]:
         """Forward pass through VAE.
 
+        Args:
+            x: Input image [B, H, W, C]
+            key: JAX random key for sampling
+            training: Whether in training mode
+
         Returns:
-            reconstructed: Full reconstructed image
-            x_recon: Wavelet coefficients
-            mu: Latent mean
-            log_var: Latent log variance
+            Dict with keys:
+                - 'reconstruction': Full reconstructed image [B, H, W, C]
+                - 'wavelet_coeffs': Wavelet domain coefficients [B, H/2, W/2, 4]
+                - 'mu': Latent mean [B, H', W', latent_dim]
+                - 'log_var': Latent log variance [B, H', W', latent_dim]
+                - 'latent': Sampled/deterministic latent [B, H', W', latent_dim]
         """
         mu, log_var = self.encode(x, training)
         z = self.reparameterize(key, mu, log_var)
         x_recon, x_haar = self.decode(z, training)
-        return x_recon, x_haar, mu, log_var
+
+        return {
+            'reconstruction': x_recon,
+            'wavelet_coeffs': x_haar,
+            'mu': mu,
+            'log_var': log_var,
+            'latent': z
+        }

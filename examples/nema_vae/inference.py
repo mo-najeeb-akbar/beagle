@@ -139,10 +139,9 @@ def run_inference(
     @jax.jit
     def infer(params: dict, batch: dict, rng_key):
         images = batch['depth']
-        outputs = model.apply(
+        x_recon, _, _, _ = model.apply(
             {'params': params}, images, training=False, key=rng_key
         )
-        x_recon = outputs['reconstruction']
         return x_recon
     
     batch_idx = 0

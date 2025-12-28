@@ -138,7 +138,11 @@ def export_single_model(
         flax_out = model_flax.apply({'params': params}, test_input, key, training=False)
         tf_out = model_tf(tf.constant(np.array(test_input)), training=False)
 
-        max_diff = np.abs(tf_out[0].numpy() - np.array(flax_out[0])).max()
+        # Flax VAE returns dict with 'reconstruction' key, TF returns list/tuple
+        flax_reconstruction = flax_out['reconstruction']
+        tf_reconstruction = tf_out[0] if isinstance(tf_out, (list, tuple)) else tf_out
+
+        max_diff = np.abs(tf_reconstruction.numpy() - np.array(flax_reconstruction)).max()
         if max_diff > tolerance.atol:
             print(f"  Numerical verification failed: max_diff={max_diff:.2e}")
             return False

@@ -29,12 +29,55 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import numpy as np
 import tensorflow as tf
+from flax import linen as nn
 
 from beagle.conversions import Tolerance, transfer_hierarchical_params
 from beagle.experiments import ExperimentTracker
-from beagle.network.hrnet import MoNet
+from beagle.network.hrnet import HRNetBackbone, SegmentationHead
 from beagle.network.tf.hrnet import build_hrnet_monet
 from beagle.training import load_checkpoint
+
+
+class SegmentationModel(nn.Module):
+    """Simple wrapper combining HRNetBackbone + SegmentationHead.
+
+    Returns dict with 'logits' key for compatibility.
+    """
+    num_classes: int
+    num_stages: int = 3
+    features: int = 32
+    target_res: float = 1.0
+    upsample_steps: int = 0
+    use_sigmoid: bool = False
+
+    def setup(self):
+        self.backbone = HRNetBackbone(
+            num_stages=self.num_stages,
+            features=self.features,
+            target_res=self.target_res
+        )
+        self.head = SegmentationHead(
+            num_classes=self.num_classes,
+            features=self.features,
+            upsample_steps=self.upsample_steps,
+            use_sigmoid=self.use_sigmoid,
+            output_key='logits'
+        )
+
+    def __call__(self, x: jnp.ndarray, train: bool = False) -> dict[str, jnp.ndarray]:
+        """Forward pass through backbone and head.
+
+        Args:
+            x: Input image [B, H, W, 1]
+            train: Training mode
+
+        Returns:
+            Dict with 'logits' key [B, H, W, num_classes]
+        """
+        backbone_out = self.backbone(x, train=train)
+        features = backbone_out['features']
+        head_out = self.head(features, train=train)
+        return head_out  # Returns {'logits': ...}
 
 
 @dataclass(frozen=True)
@@ -101,12 +144,16 @@ def export_single_model(
     key = jrandom.PRNGKey(0)
     dummy_input = jnp.ones((1, model_config.input_size, model_config.input_size, 1))
 
-    model_jax = MoNet(
+    # Parse output configuration from tuple format
+    num_classes, use_sigmoid, upsample_steps = model_config.outputs[0]
+
+    model_jax = SegmentationModel(
+        num_classes=num_classes,
         num_stages=model_config.num_stages,
         features=model_config.features,
         target_res=model_config.target_res,
-        train_bb=model_config.train_backbone,
-        outputs=model_config.outputs,
+        upsample_steps=upsample_steps,
+        use_sigmoid=use_sigmoid,
     )
 
     # Load checkpoint
@@ -164,11 +211,14 @@ def export_single_model(
         )
         tf_outputs = model_tf(tf.constant(np.array(test_input_jax)), training=False)
 
-        # Compare all outputs
-        max_diff = 0.0
-        for i in range(len(model_config.outputs)):
-            diff = np.abs(tf_outputs[i].numpy() - np.array(jax_outputs[i])).max()
-            max_diff = max(max_diff, diff)
+        # Compare outputs
+        # JAX model returns dict with 'logits' key, TF model returns list
+        # For single output case, compare logits directly
+        jax_logits = jax_outputs['logits']  # Extract from dict
+        tf_logits = tf_outputs[0] if isinstance(tf_outputs, list) else tf_outputs  # TF may return list or single output
+
+        diff = np.abs(np.array(jax_logits) - tf_logits.numpy()).max()
+        max_diff = diff
 
         if max_diff > tolerance.atol:
             print(f"  Numerical verification failed: max_diff={max_diff:.2e}")
@@ -201,11 +251,13 @@ def export_single_model(
                     )
                     tf_outputs = model_tf(batch["image"], training=False)
 
-                    for head_idx in range(len(model_config.outputs)):
-                        diff = np.abs(tf_outputs[head_idx].numpy() - np.array(jax_outputs[head_idx])).max()
-                        if diff > tolerance.atol:
-                            print(f"    Sample {idx+1} head {head_idx}: FAILED (diff={diff:.2e})")
-                            return False
+                    # Compare logits: JAX returns dict, TF returns list
+                    jax_logits = jax_outputs['logits']
+                    tf_logits = tf_outputs[0] if isinstance(tf_outputs, list) else tf_outputs
+                    diff = np.abs(np.array(jax_logits) - tf_logits.numpy()).max()
+                    if diff > tolerance.atol:
+                        print(f"    Sample {idx+1}: FAILED (diff={diff:.2e})")
+                        return False
 
                 print(f"    All {num_samples} real data samples match!")
             except Exception as e:

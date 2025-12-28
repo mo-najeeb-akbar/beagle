@@ -169,8 +169,27 @@ def _basic_block(
     return x
 
 
-class HRNetBB(nn.Module):
-    """High-Resolution Network backbone."""
+class HRNetBackbone(nn.Module):
+    """High-Resolution Network backbone for multi-scale feature extraction.
+
+    Processes input through multiple stages of parallel multi-resolution blocks,
+    maintaining high-resolution representations throughout the network.
+
+    Attributes:
+        num_stages: Number of HRNet stages (default: 3)
+        features: Base number of features (default: 32)
+        target_res: Target output resolution as fraction of input (default: 1.0)
+                   1.0 = same resolution, 0.5 = half resolution, etc.
+
+    Returns:
+        Dict with keys:
+            - 'features': Multi-scale features at target_res [B, H', W', C]
+
+    Example:
+        >>> backbone = HRNetBackbone(num_stages=3, features=32, target_res=1.0)
+        >>> outputs = backbone(images, train=True)
+        >>> features = outputs['features']  # [B, H, W, C]
+    """
 
     num_stages: int
     features: int
@@ -182,23 +201,36 @@ class HRNetBB(nn.Module):
         )
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, train: bool = True) -> jnp.ndarray:
-        """Process input through multi-resolution stages."""
+    def __call__(self, x: jnp.ndarray, train: bool = True) -> dict[str, jnp.ndarray]:
+        """Process input through multi-resolution stages.
+
+        Args:
+            x: Input image [B, H, W, C]
+            train: Training mode (affects batch normalization)
+
+        Returns:
+            dict with 'features' key containing fused multi-scale features
+        """
+        # Initial stem: downsample 4x total (2x + 2x)
         x = _down_with_skip_beginning(self, x, self.features * 2, train, name_prefix="stem_0")
         x = _down_with_skip_beginning(self, x, self.features, train, name_prefix="stem_1")
 
+        # Multi-resolution parallel processing
         batch, height, width, channels = x.shape
         blocks = [x]
         block_sizes = [1]
+
         for stage in range(self.num_stages):
             resolution_groups = defaultdict(list)
             new_blocks = []
             new_block_sizes = []
             lowest_res = 1 / (2 ** (stage + 1))
+
             for block_idx, (block, block_size) in enumerate(zip(blocks, block_sizes)):
                 num_steps_up = int(np.abs(np.log2(block_size)))
                 num_steps_down = int(np.abs(np.log2(lowest_res / block_size)))
 
+                # Upsample branches
                 for step in range(num_steps_up):
                     current_block = block
                     curr_res = block_size * (2 ** (step + 1))
@@ -213,6 +245,7 @@ class HRNetBB(nn.Module):
                         current_block = _up_blocks(self, current_block, step + 1, train, name_prefix=name)
                         resolution_groups[curr_res].append(current_block)
 
+                # Downsample branches
                 for step in range(num_steps_down):
                     current_block = block
                     curr_res = block_size * (1 / (2 ** (step + 1)))
@@ -230,6 +263,7 @@ class HRNetBB(nn.Module):
                         )
                         resolution_groups[curr_res].append(current_block)
 
+                # Residual refinement
                 name = f"stage_{stage}_block_{block_idx}_resnet_res_{block_size}"
                 if stage == (self.num_stages - 1):
                     if self.target_res == block_size:
@@ -241,6 +275,7 @@ class HRNetBB(nn.Module):
                     current_block = _resnet_block(self, current_block, train, name_prefix=name)
                     resolution_groups[block_size].append(current_block)
 
+            # Fuse multi-resolution features
             for res_idx, (resolution, resolution_blocks) in enumerate(resolution_groups.items()):
                 if len(resolution_blocks) == 1:
                     new_blocks.append(resolution_blocks[0])
@@ -259,54 +294,74 @@ class HRNetBB(nn.Module):
 
         backbone_out = blocks[-1]
 
-        return backbone_out
+        # Return dict instead of raw tensor
+        return {'features': backbone_out}
 
 
-class MoNet(nn.Module):
-    """Multi-output network based on HRNet backbone.
-    
-    Supports multiple output heads with optional upsampling.
-    Output descriptor format: (num_outputs, use_sigmoid, upsample_steps)
-    where upsample_steps is optional (defaults to 0).
+class SegmentationHead(nn.Module):
+    """Segmentation decoder head with optional upsampling.
+
+    Takes features from a backbone and decodes to per-pixel class predictions.
+    Supports configurable upsampling and activation functions.
+
+    Attributes:
+        num_classes: Number of segmentation classes
+        features: Number of intermediate features (default: 32)
+        upsample_steps: Number of 2x upsampling steps (default: 0)
+        use_sigmoid: Apply sigmoid activation instead of softmax (default: False)
+        output_key: Name of output dict key (default: 'logits')
+
+    Returns:
+        Dict with single key (specified by output_key parameter):
+            - <output_key>: Segmentation logits/probabilities [B, H', W', num_classes]
+
+    Example:
+        >>> head = SegmentationHead(num_classes=3, upsample_steps=2, output_key='logits')
+        >>> outputs = head(backbone_features, train=True)
+        >>> logits = outputs['logits']  # [B, H*4, W*4, 3]
     """
 
-    num_stages: int
-    features: int
-    target_res: float
-    train_bb: bool
-    outputs: list
+    num_classes: int
+    features: int = 32
+    upsample_steps: int = 0
+    use_sigmoid: bool = False
+    output_key: str = 'logits'
 
     def setup(self) -> None:
         self.norm = partial(
             nn.BatchNorm, momentum=0.9, epsilon=1e-5, dtype=jnp.float32
         )
-        self.backbone = HRNetBB(self.num_stages, self.features, self.target_res)
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, train: bool = True) -> list[jnp.ndarray]:
-        """Process input through backbone and multiple output heads."""
-        backbone_out = self.backbone(x, (train and self.train_bb))
+    def __call__(self, features: jnp.ndarray, train: bool = True) -> dict[str, jnp.ndarray]:
+        """Decode features to segmentation output.
 
-        outputs = []
-        for head_idx, descriptor in enumerate(self.outputs):
-            if len(descriptor) == 2:
-                num_outs, use_sigmoid = descriptor
-                upsample_steps = 0
-            else:
-                num_outs, use_sigmoid, upsample_steps = descriptor
-            
-            head = _basic_block(self, backbone_out, self.features, train)
-            head = _basic_block(self, head, self.features, train)
-            head = _basic_block(self, head, num_outs, train, kernel_size=1)
-            if upsample_steps > 0:
-                head = _up_blocks(self, head, upsample_steps, train)
-            out = nn.Conv(features=num_outs, kernel_size=(1, 1), use_bias=True)(head)
-            if use_sigmoid:
-                out = nn.sigmoid(out)
-            outputs.append(out)
+        Args:
+            features: Input features from backbone [B, H, W, C]
+            train: Training mode (affects batch normalization)
 
-        outputs.append(backbone_out)
-        return outputs
+        Returns:
+            dict with output_key -> logits [B, H', W', num_classes]
+        """
+        # Decoder blocks: refine features for segmentation
+        x = _basic_block(self, features, self.features, train, name_prefix="decode_0")
+        x = _basic_block(self, x, self.features, train, name_prefix="decode_1")
+        x = _basic_block(self, x, self.num_classes, train, kernel_size=1, name_prefix="decode_2")
+
+        # Optional upsampling to reach target resolution
+        if self.upsample_steps > 0:
+            x = _up_blocks(self, x, self.upsample_steps, train, name_prefix="upsample")
+
+        # Final 1x1 conv for class logits
+        output = nn.Conv(features=self.num_classes, kernel_size=(1, 1), use_bias=True)(x)
+
+        # Optional activation (sigmoid for binary/multi-label)
+        if self.use_sigmoid:
+            output = nn.sigmoid(output)
+
+        # Return dict with configurable key name
+        return {self.output_key: output}
+
 
 class EmbedNet(nn.Module):
     """Embedding network with configurable backbone."""

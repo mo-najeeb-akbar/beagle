@@ -8,16 +8,59 @@ import jax
 import jax.numpy as jnp
 import jax.random as random
 import optax
+from flax import linen as nn
 
-from beagle.network.hrnet import MoNet
+from beagle.network.hrnet import HRNetBackbone, SegmentationHead
 from beagle.experiments import ExperimentConfig, ExperimentTracker, ModelRegistry
-from beagle.training import TrainState, save_checkpoint, close_checkpointer
+from beagle.training import TrainState, save_checkpoint
 from beagle.visualization import create_viz_callback, VizConfig
 
 from data_loader import create_segmentation_iterator
 from configs import DatasetConfig, ModelConfig, TrainingConfig
 
 from training_steps import create_train_step, create_val_step
+
+
+class SegmentationModel(nn.Module):
+    """Simple wrapper combining HRNetBackbone + SegmentationHead.
+
+    Returns dict with 'logits' key for compatibility with training_steps.py.
+    """
+    num_classes: int
+    num_stages: int = 3
+    features: int = 32
+    target_res: float = 1.0
+    upsample_steps: int = 0
+    use_sigmoid: bool = False
+
+    def setup(self):
+        self.backbone = HRNetBackbone(
+            num_stages=self.num_stages,
+            features=self.features,
+            target_res=self.target_res
+        )
+        self.head = SegmentationHead(
+            num_classes=self.num_classes,
+            features=self.features,
+            upsample_steps=self.upsample_steps,
+            use_sigmoid=self.use_sigmoid,
+            output_key='logits'
+        )
+
+    def __call__(self, x: jnp.ndarray, train: bool = True) -> dict[str, jnp.ndarray]:
+        """Forward pass through backbone and head.
+
+        Args:
+            x: Input image [B, H, W, 1]
+            train: Training mode
+
+        Returns:
+            Dict with 'logits' key [B, H, W, num_classes]
+        """
+        backbone_out = self.backbone(x, train=train)
+        features = backbone_out['features']
+        head_out = self.head(features, train=train)
+        return head_out  # Returns {'logits': ...}
 
 # def overlay_mask_on_image(
 #     image: jnp.ndarray, mask: jnp.ndarray, num_classes: int = 3, alpha: float = 0.5
@@ -145,25 +188,31 @@ def main():
     )
 
     # 4. Initialize model
-    model = MoNet(
+    # Parse output configuration from old tuple format
+    # config.model.outputs = ((3, False, 2),) means:
+    #   3 classes, no sigmoid, 2 upsample steps
+    num_classes, use_sigmoid, upsample_steps = config.model.outputs[0]
+
+    model = SegmentationModel(
+        num_classes=num_classes,
         num_stages=config.model.num_stages,
         features=config.model.features,
         target_res=config.model.target_res,
-        train_bb=config.model.train_backbone,
-        outputs=config.model.outputs,
+        upsample_steps=upsample_steps,
+        use_sigmoid=use_sigmoid,
     )
-    
+
     key = random.key(config.seed)
     key, init_key = random.split(key)
     dummy = jnp.ones((1, config.model.input_size, config.model.input_size, 1))
     variables = model.init(init_key, dummy, train=False)
     params, batch_stats = variables['params'], variables['batch_stats']
-    
+
     tx = optax.adamw(config.training.learning_rate)
     state = TrainState.create(apply_fn=model.apply, params=params, batch_stats=batch_stats, tx=tx)
-    
+
     # Model steps
-    train_step = create_train_step()
+    train_step = create_train_step(num_classes)
     val_step = create_val_step()
 
     # 5. Training loop with tracking
@@ -215,7 +264,4 @@ def main():
 
 
 if __name__ == '__main__':
-    try:
-        main()
-    finally:
-        close_checkpointer()
+    main()

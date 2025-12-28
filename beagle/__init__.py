@@ -4,7 +4,27 @@ Public API exports for dataset handling, network architectures, training,
 and visualization.
 """
 
-# Training utilities
+# Graph API (new composable architecture)
+from beagle.graph import (
+    ComputeNode,
+    ComputeGraph,
+    GraphState,
+    create_train_step,
+    create_eval_step,
+    train_epoch as graph_train_epoch,
+    evaluate,
+    simple_training_loop,
+)
+
+# Checkpoint utilities for graphs
+from beagle.checkpoint import (
+    save_graph_state,
+    save_node,
+    load_graph_state,
+    load_node,
+)
+
+# Training utilities (legacy)
 from beagle.training import (
     TrainState,
     TrainingConfig,
@@ -39,7 +59,21 @@ from beagle.dataset import (
 __version__ = "0.1.0"
 
 __all__ = [
-    # Training
+    # Graph API (new)
+    "ComputeNode",
+    "ComputeGraph",
+    "GraphState",
+    "create_train_step",
+    "create_eval_step",
+    "graph_train_epoch",
+    "evaluate",
+    "simple_training_loop",
+    "save_graph_state",
+    "save_node",
+    "load_graph_state",
+    "load_node",
+
+    # Training (legacy)
     "TrainState",
     "TrainingConfig",
     "Metrics",

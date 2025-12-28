@@ -29,5 +29,5 @@ class ModelConfig:
 class TrainingConfig:
     """Training hyperparameters."""
     learning_rate: float = 0.001
-    num_epochs: int = 10
+    num_epochs: int = 30
     optimizer: str = 'adamw'

@@ -17,9 +17,13 @@ def create_train_step(wavelet_weights: tuple[float, ...]):
         wavelets = wavedec2(images, wavelet="haar")
 
         def loss_fn(params):
-            x_recon, x_wave, mu, log_var = state.apply_fn(
+            # VAE now returns dict instead of tuple
+            outputs = state.apply_fn(
                 {'params': params}, images, training=True, key=rng_key
             )
+            x_recon = outputs['reconstruction']
+            x_wave = outputs['wavelet_coeffs']
+
             recon_loss = jnp.mean(jnp.square(images - x_recon))
             ll_loss = jnp.mean(jnp.square(wavelets[..., 0] - x_wave[..., 0]))
             hl_loss = jnp.mean(jnp.square(wavelets[..., 1] - x_wave[..., 1]))
@@ -44,9 +48,13 @@ def create_val_step(wavelet_weights: tuple[float, ...]):
         images = batch['depth']
         wavelets = wavedec2(images, wavelet="haar")
 
-        x_recon, x_wave, _, _ = state.apply_fn(
+        # VAE now returns dict instead of tuple
+        outputs = state.apply_fn(
             {'params': state.params}, images, training=False, key=rng_key
         )
+        x_recon = outputs['reconstruction']
+        x_wave = outputs['wavelet_coeffs']
+
         recon_loss = jnp.mean(jnp.square(images - x_recon))
         ll_loss = jnp.mean(jnp.square(wavelets[..., 0] - x_wave[..., 0]))
 

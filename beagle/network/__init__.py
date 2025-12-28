@@ -2,7 +2,7 @@ from beagle.network.attention import Attention, Block, LayerScale, MLP
 from beagle.network.categorical_vae import CategoricalVAE
 from beagle.network.compact_vae import CompactVAE
 from beagle.network.dense_encoder import DenseEncoder
-from beagle.network.hrnet import EmbedNet, HRNetBB, MoNet
+from beagle.network.hrnet import EmbedNet, HRNetBackbone, SegmentationHead
 from beagle.network.patch import PatchEmbed
 
 from beagle.network.unet import DenoisingUNet
@@ -24,10 +24,10 @@ __all__ = [
     "EmbedNet",
     "HaarWaveletConv",
     "HaarWaveletConvTranspose",
-    "HRNetBB",
+    "HRNetBackbone",
+    "SegmentationHead",
     "LayerScale",
     "MaskedViT",
     "MLP",
-    "MoNet",
     "PatchEmbed"
 ]
